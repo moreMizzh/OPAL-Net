@@ -1,0 +1,31 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Experiment outputs
+output/
+
+# Checkpoints and generated artifacts
+*.pth
+*.pt
+*.ckpt
+*.nii.gz
+*.npy
+*.csv
+*.log
+
+# Notebook and editor artifacts
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+test_*.py
