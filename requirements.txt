@@ -1,6 +1,11 @@
-numpy
-matplotlib
-SimpleITK
-tqdm
-torch
-monai
+# OPAL-Net core dependencies (pinned from the current `prosnet` environment)
+# Python version used locally: 3.10.20
+# PyTorch CUDA wheels are resolved from the extra index below.
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch==2.10.0+cu128
+numpy==2.2.6
+matplotlib==3.10.8
+monai==1.5.2
+simpleitk==2.5.3
+tqdm==4.67.3
