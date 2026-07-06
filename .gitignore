@@ -31,7 +31,7 @@ Thumbs.db
 test_*.py
 
 # Review-stage withheld implementation files
-# These files remain local and will be released after acceptance.
+# These files remain local while the release materials are being organized.
 dataset.py
 losses.py
 utils.py
@@ -41,3 +41,5 @@ train_reg.py
 inference_reg.py
 train_seg.py
 inference_seg.py
+# Local author notes
+README_CN.md
