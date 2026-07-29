@@ -28,18 +28,6 @@ output/
 # OS files
 .DS_Store
 Thumbs.db
-test_*.py
 
-# Review-stage withheld implementation files
-# These files remain local while the release materials are being organized.
-dataset.py
-losses.py
-utils.py
-model_reg.py
-model_seg.py
-train_reg.py
-inference_reg.py
-train_seg.py
-inference_seg.py
 # Local author notes
 README_CN.md
