@@ -1,7 +1,7 @@
-"""OPAL-Net 配准推理 / 导出入口脚本。
+"""Run registration inference, export warped outputs, and compute metrics.
 
-它既负责导出 warped image / label / flow，也负责按 split 计算
-Dice、HD95 与 folding rate 等统计指标。
+The script supports per-split image, label, and flow export together with
+Dice, HD95, and folding-rate summaries.
 """
 
 from __future__ import annotations
@@ -34,55 +34,54 @@ import model_reg as reg_model_lib
 
 @dataclass(frozen=True)
 class Config:
-    """reg 推理配置，缺省项会尽量从训练目录回填。
+    """Registration inference configuration.
 
-    可把字段分成两类理解：
-    - 训练结构绑定项：`imgsize / int_steps / enable_stage_b / roi_*`，默认必须和训练同构；
-    - 当前推理行为项：`export_* / compute_* / checkpoint_name`，可按这次导出需求单独覆盖。
+    Model-structure fields must match training; export and metric fields
+    control the current inference run.
     """
 
     # ==============================
-    # 权重与 split 选择
+    #  split
     # ==============================
-    model_dir: str = "./output/Reg/BCV_cascaded_reg"  # 训练输出目录，默认从这里读取 config 和 checkpoint。
-    checkpoint_name: str = "best_dice"  # 支持 best_dice / best_loss / resume_latest.pth / 显式文件名。
+    model_dir: str = "./output/Reg/BCV_cascaded_reg"  #  config  checkpoint
+    checkpoint_name: str = "best_dice"  #  best_dice / best_loss / resume_latest.pth /
 
-    export_train: bool = True  # 是否处理 train split。
-    export_val: bool = False  # 是否处理 val split。
-    export_test: bool = False  # 是否处理 test split。
-    compute_metrics: bool = True  # False 时只做导出，不计算 Dice / HD95 / folding。
-    compute_hd95: bool = False  # True 时额外计算 95% Hausdorff。
-    compute_folding_rate: bool = True  # True 时计算负 Jacobian 占比。
-    export_final: bool = True  # 保存最终 warped image / label。
-    export_inputs: bool = False  # 保存原始 atlas / target 输入，主要用于排查数据链路。
-    export_target_label: bool = False  # 保存 target label，通常只在调试导出时使用。
-    export_coarse: bool = True  # 保存 A 阶段的粗配准结果。
-    export_flow: bool = True  # 保存 coarse / residual / final flow。
+    export_train: bool = True  #  train split
+    export_val: bool = False  #  val split
+    export_test: bool = False  #  test split
+    compute_metrics: bool = True  # False  Dice / HD95 / folding
+    compute_hd95: bool = False  # True  95% Hausdorff
+    compute_folding_rate: bool = True  # True  Jacobian
+    export_final: bool = True  #  warped image / label
+    export_inputs: bool = False  #  atlas / target
+    export_target_label: bool = False  #  target label
+    export_coarse: bool = True  #  A
+    export_flow: bool = True  #  coarse / residual / final flow
 
     # ==============================
-    # 训练配置回填项
+    #
     # ==============================
-    data_root: str | None = None  # 留空时从 train config.json 回填。
-    imgsize: tuple[int, int, int] | None = None  # 推理必须和训练时空间尺寸一致。
-    num_classes: int | None = None  # 只用于标签指标统计。
-    int_steps: int | None = None  # 必须和训练时积分步数一致，否则 flow 语义会偏。
-    enable_stage_b: bool | None = None  # 与训练模型结构绑定。
-    enable_roi_b: bool | None = None  # 与训练模型结构绑定。
-    roi_classes: tuple[int, ...] | None = None  # 与训练模型结构绑定。
-    stage_a_downsample_factor: int | None = None  # 与训练模型结构绑定。
-    roi_dilation_radius: int | None = None  # 与训练模型结构绑定。
-    roi_condition_channels: int | None = None  # 与训练模型结构绑定。
-    bcv_atlas_id: int | None = None  # BCV 可选 atlas id；留空时数据类内部回落到默认 27。
-    metrics_json_name: str = "reg_metrics.json"  # 指标汇总文件名。
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"  # 默认优先 GPU。
-    memory_release_tolerance_mb: int = 64  # case 间显存回落容忍值，防止 HD95 连续计算堆积。
+    data_root: str | None = None  #  train config.json
+    imgsize: tuple[int, int, int] | None = None  #
+    num_classes: int | None = None  #
+    int_steps: int | None = None  #  flow
+    enable_stage_b: bool | None = None  #
+    enable_roi_b: bool | None = None  #
+    roi_classes: tuple[int, ...] | None = None  #
+    stage_a_downsample_factor: int | None = None  #
+    roi_dilation_radius: int | None = None  #
+    roi_condition_channels: int | None = None  #
+    bcv_atlas_id: int | None = None  # Optional BCV atlas ID; defaults to 27 in the dataset loader.
+    metrics_json_name: str = "reg_metrics.json"  #
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"  #  GPU
+    memory_release_tolerance_mb: int = 64  # case  HD95
 
     @classmethod
     def from_env(cls):
-        """从 `OPAL_REG_INF_*` 环境变量读取推理配置。"""
+        """ `OPAL_REG_INF_*` """
 
         cfg = cls()
-        # 这里保留纯环境变量入口，方便训练脚本尾端直接复用，不引入第二套参数系统。
+        #
         env_map = {
             "OPAL_REG_INF_MODEL_DIR": ("model_dir", str),
             "OPAL_REG_INF_CHECKPOINT": ("checkpoint_name", str),
@@ -110,11 +109,11 @@ class Config:
         return cfg
 
     def resolve_from_training_config(self) -> None:
-        """尽量从训练目录回填推理所需的结构参数。
+        """
 
-        设计原则是“推理默认与训练同构”：
-        如果调用方没有显式覆盖，就优先读取 `model_dir/config.json`，
-        避免 checkpoint 能加载但结构语义对不上的隐性错误。
+
+         `model_dir/config.json`
+         checkpoint
         """
 
         train_cfg = {}
@@ -128,7 +127,7 @@ class Config:
                 "Please provide data_root/imgsize/num_classes/int_steps explicitly."
             )
 
-        # 推理默认与训练同构：只要调用方没显式覆盖，就从训练配置补齐必要字段。
+        #
         if self.data_root is None:
             object.__setattr__(self, "data_root", train_cfg["source_root_dir"])
         if self.imgsize is None:
@@ -165,15 +164,15 @@ def write_nifti(
     save_path: str,
     reference_path: str | None = None,
 ):
-    """按参考影像头信息写出张量。
+    """
 
-    参考图像提供 spacing / origin / direction，避免导出的 warped 结果只有数组值，
-    却丢失医学图像坐标系信息。
+     spacing / origin / direction warped
+
     """
 
     array = tensor.detach().cpu().squeeze().numpy()
     if array.ndim == 4 and array.shape[0] in {2, 3}:
-        # flow 采用 [C, D, H, W]，写出时转成 SimpleITK 需要的 [D, H, W, C] vector image。
+        # flow  [C, D, H, W] SimpleITK  [D, H, W, C] vector image
         out_img = sitk.GetImageFromArray(np.moveaxis(array, 0, -1), isVector=True)
     else:
         out_img = sitk.GetImageFromArray(array)
@@ -194,7 +193,7 @@ def _extract_path(raw_item) -> str | None:
 
 
 def _resolve_reference_paths(dataset, batch) -> tuple[str | None, str | None]:
-    """从 dataset / batch 中找出 atlas 与 target 的参考 NIfTI 路径。"""
+    """ dataset / batch  atlas  target  NIfTI """
 
     target_path = _extract_path(batch[4]) if len(batch) >= 5 else None
     atlas_path = None
@@ -216,7 +215,7 @@ def _compute_binary_dice(pred_mask: torch.Tensor, target_mask: torch.Tensor) -> 
 
 
 def _compute_binary_hd95(pred_mask: np.ndarray, target_mask: np.ndarray) -> float | None:
-    """二值器官 HD95；若某一侧为空，则返回 None 表示该类不可比。"""
+    """ HD95 None """
 
     pred_sum = int(pred_mask.sum())
     target_sum = int(target_mask.sum())
@@ -250,7 +249,7 @@ def _compute_binary_hd95(pred_mask: np.ndarray, target_mask: np.ndarray) -> floa
 
 
 def _compute_folding_rate(flow: torch.Tensor) -> float:
-    """通过 Jacobian determinant < 0 的体素比例衡量形变折叠。"""
+    """ Jacobian determinant < 0 """
 
     if flow.ndim == 5:
         if flow.shape[0] != 1 or flow.shape[1] != 3:
@@ -298,9 +297,9 @@ def _compute_case_metrics(
     compute_hd95: bool,
     compute_folding_rate: bool,
 ) -> dict[str, object]:
-    """统计单个 case 的指标。
+    """ case
 
-    输出既包含 case 级均值，也保留 per-class 结果，便于后续画图和排查异常类别。
+     case  per-class
     """
 
     dice_per_class: dict[str, float] = {}
@@ -355,7 +354,7 @@ def _compute_case_metrics(
 
 
 def _summarize_split(case_metrics: list[dict[str, object]]) -> dict[str, object]:
-    """把一个 split 的 case 指标汇总成均值统计。"""
+    """ split  case """
 
     dice_values = [item["dice_mean"] for item in case_metrics if item["dice_mean"] is not None]
     hd95_values = [item["hd95_mean"] for item in case_metrics if item["hd95_mean"] is not None]
@@ -484,7 +483,7 @@ def _stem_from_batch(batch, fallback_idx: int) -> str:
 
 
 def _export_split(reg_model, dataset, split_name: str, cfg: Config):
-    """执行一个 split 的完整推理流程：可选导出、可选统计指标。"""
+    """ split """
 
     loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0, pin_memory=False)
     save_outputs = any(
@@ -496,7 +495,7 @@ def _export_split(reg_model, dataset, split_name: str, cfg: Config):
             cfg.export_flow,
         ]
     )
-    # 只有确实要保存结果时才创建目录，避免“纯算指标”时留下空目录。
+    #
     split_dir = os.path.join(cfg.model_dir, f"{split_name}_output") if save_outputs else None
     if split_dir is not None:
         os.makedirs(split_dir, exist_ok=True)
@@ -530,7 +529,7 @@ def _export_split(reg_model, dataset, split_name: str, cfg: Config):
             write_nifti(out["final_flow"], os.path.join(split_dir, f"{stem}_final_flow.nii.gz"), target_ref_path)
 
         if cfg.compute_metrics:
-            # 指标与导出解耦：train split 常用于保存可视化结果，test split 常用于正式统计。
+            # train split test split
             pred_label = out["final_warped_label"].detach().cpu().squeeze().long()
             target_label_cpu = target_label.detach().cpu().squeeze().long()
             final_flow_cpu = out["final_flow"].detach().cpu()
@@ -561,14 +560,14 @@ def _export_split(reg_model, dataset, split_name: str, cfg: Config):
 
 
 def main(cfg: Config):
-    """推理总控入口。
+    """
 
-    主流程顺序：
-    1. 解析并回填训练配置；
-    2. 解析 checkpoint 路径并恢复模型；
-    3. 构建 train/val/test 数据集；
-    4. 按 `export_*` 开关逐个 split 执行导出；
-    5. 若开启 `compute_metrics`，持续把 split 结果写入 `reg_metrics.json`。
+
+    1.
+    2.  checkpoint
+    3.  train/val/test
+    4.  `export_*`  split
+    5.  `compute_metrics` split  `reg_metrics.json`
     """
 
     object.__setattr__(cfg, "model_dir", str(Path(cfg.model_dir).resolve()))

@@ -1,30 +1,7 @@
-"""OPAL-Net 配准训练入口脚本。
+"""Train the OPAL-Net cascaded registration model.
 
-设计目标：
-- 基于 930 结构整理成公开版 cascaded_reg；
-- Stage A 改为低分辨率配准，默认 `4x` 下采样，可通过配置修改；
-- Stage B 仍使用 910 的单编码器 ROI-B refine，在原分辨率细化；
-- 最终结果在原图空间组合 `A coarse flow + B residual flow`，最后只对原图做最终 warp，减少多次图像重采样模糊。
-
-当前网络结构：
-- A: 先把 moving / fixed 显式下采样到低分辨率，再预测 low-res coarse flow；
-- A->Full: 将 low-res flow 按空间比例映射回原分辨率，得到 `coarse_flow / coarse_warped`；
-- ROI 条件: 由 full-res `coarse_warped_label + fixed` 构造 `soft ROI / boundary / fixed edge`；
-- B: 单编码器 ROI-B refine，将 `coarse_warped / fixed / roi_condition` 联合编码，再预测 residual deformation；
-- Final: `final_flow = compose(fullres_coarse_flow, residual_flow)`，最后一次性作用到原图。
-
-当前 loss 组成：
-- Stage A(low-res): `NCC + smooth + jac`；
-- Stage B: `NCC + smooth + jac`；
-- 其中 Stage A 的重建项在 low-res 图像上计算，B 与最终输出都在 full-res 空间完成。
-
-读这个入口脚本时，可以按下面顺序理解训练链路：
-1. 先由 `Config.from_env()` 和 `DATASET_INFO` 决定默认实验配置；
-2. 再在 `main()` 里创建输出目录、保存配置、固定随机种子；
-3. 然后构建模型、数据集、优化器和 loss；
-4. 训练循环里分别执行 `train_one_epoch()` / `validate_one_epoch()`；
-5. 每轮根据验证指标更新 best checkpoint，必要时早停；
-6. 训练结束后按开关自动调用 `inference_reg.py` 导出结果并统计测试指标。
+The pipeline predicts a coarse deformation, refines it with an ROI-conditioned
+stage, and exports final warped images, labels, and flows.
 """
 
 from __future__ import annotations
@@ -61,9 +38,9 @@ import utils as utils_lib
 import model_reg as reg_model_lib
 
 
-# 这里维护公开仓库里常用的数据集预设。
-# 当 `dataset_key` 命中这些键时，会自动覆盖 `source_root_dir / exp_name / imgsize / num_classes`
-# 这类“随数据集而变化”的默认值，方便第一次运行时少配几项环境变量。
+#
+#  `dataset_key`  `source_root_dir / exp_name / imgsize / num_classes`
+#
 DATASET_INFO = {
     "ADNI": {
         "source_root_dir": "../data/ADNI_Dataset",
@@ -72,14 +49,14 @@ DATASET_INFO = {
         "num_classes": 4,
     },
     "BCV": {
-        "source_root_dir": "../data/BCV_by_ZF/bcv_small",
-        "exp_name": "BCV_cascaded_reg_atlas07_4x",
+        "source_root_dir": "../data/BCV/bcv_small",
+        "exp_name": "BCV_cascaded_reg_4x",
         "imgsize": (128, 128, 160),
         "num_classes": 5,
         "epochs": 400,
     },
     "OASIS": {
-        "source_root_dir": "../data/OASIS_by_ZF/OASIS",
+        "source_root_dir": "../data/OASIS/OASIS",
         "exp_name": "OASIS_cascaded_reg_downsample1x",
         "imgsize": (224, 192, 160),
         "num_classes": 36,
@@ -88,7 +65,7 @@ DATASET_INFO = {
 
 
 def apply_dataset_preset(cfg, dataset_key: str | None):
-    """用数据集名覆盖入口默认配置。"""
+    """"""
 
     if not dataset_key:
         return cfg
@@ -104,13 +81,13 @@ def apply_dataset_preset(cfg, dataset_key: str | None):
 
 @dataclass(frozen=True)
 class Config:
-    """公开版 cascaded_reg 配准实验配置。
+    """Cascaded registration experiment configuration.
 
-    约定：
-    - `save_root_dir` 是实验总根目录，`save_dir` 是本次实际输出目录。
-    - `dataset_key` 先决定公开默认值，再由显式环境变量二次覆盖。
-    - `imgsize / int_steps / enable_stage_b / roi_*` 这类字段与模型结构强绑定，
-      训练权重与推理配置不能随意错配。
+
+    - `save_root_dir` `save_dir`
+    - `dataset_key`
+    - `imgsize / int_steps / enable_stage_b / roi_*`
+
     """
 
     save_dir: str = ""
@@ -123,69 +100,69 @@ class Config:
     exp_name: str = ""
     imgsize: tuple[int, int, int] = (0, 0, 0)
     num_classes: int = 0
-    bcv_atlas_id: int | None = None  # BCV 可选 atlas id；留空时数据类内部回落到默认 27。
+    bcv_atlas_id: int | None = None  # Optional BCV atlas ID; defaults to 27 in the dataset loader.
 
     # ==============================
-    # 训练调度
+    #
     # ==============================
-    batch_size: int = 1  # 3D reg 显存占用大，默认按 case 训练。
-    epochs: int = 200  # 最大训练轮数，上限；真正停止通常由早停控制。
-    epoch_start: int = 0  # 仅在特殊手动续训时有意义，正常由 checkpoint 覆盖。
-    save_every: int = 20  # 常规里程碑权重保存间隔。
-    patience: int = 30  # 验证 Dice / loss 长时间都不提升时提前结束训练。
-    num_workers: int = 0  # 为了稳定复现与避免 3D IO 问题，默认不开多进程加载。
+    batch_size: int = 1  # 3D reg  case
+    epochs: int = 200  #
+    epoch_start: int = 0  #  checkpoint
+    save_every: int = 20  #
+    patience: int = 30  #  Dice / loss
+    num_workers: int = 0  #  3D IO
 
     # ==============================
-    # 优化器与模型主开关
+    #
     # ==============================
-    lr: float = 1.5e-4  # Adam 初始学习率。
-    weight_decay: float = 0.0  # reg 主链默认不加额外 L2 正则。
-    int_steps: int = 7  # SVF -> flow 的 scaling-and-squaring 积分步数。
-    enable_stage_b: bool = True  # False 时退化成只跑 A 阶段的粗配准。
-    enable_roi_b: bool = True  # ROI-B 开关；1100 默认打开。
-    roi_classes: tuple[int, ...] = ()   # ROI 类别；留空时使用全部 foreground。
-    stage_a_downsample_factor: int = 4  # A 阶段图像下采样倍数；930 默认 4x，可改成 4/6/8 等。
-    roi_dilation_radius: int = 3        # moving-side ROI 软膨胀半径。
-    roi_condition_channels: int = 3     # soft ROI / boundary / fixed edge 三个条件通道。
-    detach_stage_a_for_b: bool = False  # True 时阻断 B 对 A 的反向梯度，便于做阶段解耦实验。
-    seed: int = 42  # 统一控制数据顺序、初始化和 cudnn 随机性。
+    lr: float = 1.5e-4  # Adam
+    weight_decay: float = 0.0  # reg  L2
+    int_steps: int = 7  # SVF -> flow  scaling-and-squaring
+    enable_stage_b: bool = True  # False  A
+    enable_roi_b: bool = True  # Enable the ROI refinement stage.
+    roi_classes: tuple[int, ...] = ()   # ROI  foreground
+    stage_a_downsample_factor: int = 4  # Coarse-stage downsampling factor.
+    roi_dilation_radius: int = 3        # moving-side ROI
+    roi_condition_channels: int = 3     # soft ROI / boundary / fixed edge
+    detach_stage_a_for_b: bool = False  # True  B  A
+    seed: int = 42  #  cudnn
 
-    amp_enabled: bool = True  # 混合精度，主要用于降低 3D 训练显存。
-    max_grad_norm: float = 3.0  # 梯度裁剪上限，避免少数 case 导致训练发散。
-
-    # ==============================
-    # 损失权重
-    # ==============================
-    coarse_ncc_weight: float = 1.0  # A 阶段 NCC 相似度权重（默认不加系数，显式占位）。
-    coarse_smooth_weight: float = 1.0  # A 阶段 flow smoothness 权重。
-    coarse_jac_weight: float = 0.00  # A 阶段 Jacobian penalty 权重。
-    refine_ncc_weight: float = 1.0  # B 阶段 NCC 相似度权重。
-    refine_smooth_weight: float = 1.0 #  0.01  # B 阶段 residual smoothness 权重。
-    refine_jac_weight: float = 0.00  # B 阶段 Jacobian penalty 权重。
-    plot_overwrite: bool = True  # True 时训练曲线始终覆盖最新图，便于长期实验查看。
-    early_stop_min_delta: float = 1e-4  # Dice 提升低于该阈值视为“没有真正变好”。
+    amp_enabled: bool = True  #  3D
+    max_grad_norm: float = 3.0  #  case
 
     # ==============================
-    # 训练尾端自动推理
+    #
     # ==============================
-    auto_infer_after_train: bool = True  # 训练结束后用 930 专用 inference 跑一次 reg 推理。
-    auto_infer_save_train_outputs: bool = True  # 导出 train split 的粗/细 image、label、flow。
-    auto_infer_compute_test_metrics: bool = True  # 计算 test split 指标，同时保存 test 导出结果。
-    auto_infer_compute_hd95: bool = True  # test 指标阶段是否额外统计 HD95。
-    auto_infer_compute_folding_rate: bool = True  # test 指标阶段是否统计负 Jacobian 比例。
-    auto_infer_checkpoint_name: str = "best_dice"  # 自动推理默认读取的权重别名。
+    coarse_ncc_weight: float = 1.0  # A  NCC
+    coarse_smooth_weight: float = 1.0  # A  flow smoothness
+    coarse_jac_weight: float = 0.00  # A  Jacobian penalty
+    refine_ncc_weight: float = 1.0  # B  NCC
+    refine_smooth_weight: float = 1.0 #  0.01  # B  residual smoothness
+    refine_jac_weight: float = 0.00  # B  Jacobian penalty
+    plot_overwrite: bool = True  # True
+    early_stop_min_delta: float = 1e-4  # Dice
+
+    # ==============================
+    #
+    # ==============================
+    auto_infer_after_train: bool = True  # Run registration inference after training.
+    auto_infer_save_train_outputs: bool = True  #  train split / imagelabelflow
+    auto_infer_compute_test_metrics: bool = True  #  test split  test
+    auto_infer_compute_hd95: bool = True  # test  HD95
+    auto_infer_compute_folding_rate: bool = True  # test  Jacobian
+    auto_infer_checkpoint_name: str = "best_dice"  #
 
     @classmethod
     def from_env(cls):
-        """从环境变量构建配置。
+        """
 
-        设计上优先走 `dataset_key -> DATASET_INFO` 这条默认链路，
-        然后再用 `OPAL_REG_*` 环境变量逐项覆盖，避免公开入口依赖额外参数系统。
+         `dataset_key -> DATASET_INFO`
+         `OPAL_REG_*`
         """
 
         cfg = cls()
 
-        # `imgsize` 支持用逗号字符串从环境变量传入，不引入额外 parser。
+        # `imgsize`  parser
         def _parse_imgsize(raw: str) -> tuple[int, int, int]:
             parts = [p.strip() for p in raw.split(",")]
             if len(parts) != 3:
@@ -197,8 +174,8 @@ class Config:
                 return ()
             return tuple(int(p.strip()) for p in raw.split(",") if p.strip() != "")
 
-        # 这里显式维护 `OPAL_REG_* -> Config 字段` 的映射关系，便于读者追踪
-        # “某个 shell 变量最终改了哪项训练配置”。
+        #  `OPAL_REG_* -> Config `
+        #  shell
         env_map = {
             "OPAL_REG_SAVE_DIR": ("save_dir", str),
             "OPAL_REG_VERSION": ("version", str),
@@ -246,7 +223,7 @@ class Config:
             ),
             "OPAL_REG_AUTO_INFER_CHECKPOINT": ("auto_infer_checkpoint_name", str),
         }
-        # `dataset_key` 先触发一轮数据集预设，再允许显式路径或数值字段继续覆盖。
+        # `dataset_key`
         raw_dataset_key = os.environ.get("OPAL_REG_DATASET_KEY")
         if raw_dataset_key is not None and raw_dataset_key != "":
             object.__setattr__(cfg, "dataset_key", raw_dataset_key)
@@ -264,21 +241,21 @@ class Config:
         return cfg
 
     def makedirs(self):
-        """创建本次实验输出目录。
+        """
 
-        默认使用“实验名 + 时间戳”隔离每次运行，避免多次训练时意外覆盖旧结果。
+         +
         """
 
         save_dir = self.save_dir
         if not save_dir:
-            # 训练脚本始终以时间戳隔离实验，避免手工改名遗漏时覆盖历史结果。
+            #
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             save_dir = os.path.join(self.save_root_dir, f"{self.exp_name}_{ts}")
             object.__setattr__(self, "save_dir", save_dir)
         os.makedirs(save_dir, exist_ok=True)
 
     def save_json(self, file_name: str = "config.json"):
-        """把最终生效的配置落盘，方便之后的推理脚本回填训练参数。"""
+        """"""
 
         with open(os.path.join(self.save_dir, file_name), "w", encoding="utf-8") as f:
             json.dump(asdict(self), f, indent=2, ensure_ascii=False)
@@ -286,9 +263,9 @@ class Config:
             os.fsync(f.fileno())
 
     def set_seed(self):
-        """固定 Python / NumPy / Torch 随机性，并返回 DataLoader 的播种工具。"""
+        """ Python / NumPy / Torch  DataLoader """
 
-        # reg 的波动对数据顺序很敏感，这里把 Python / NumPy / Torch 全部锁住。
+        # reg  Python / NumPy / Torch
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
@@ -310,7 +287,7 @@ class Config:
 
 
 class BCVTrainPlusValRegDataset(dataset_lib.BCV_Dataset):
-    """BCV reg 专用口径：train=train+val，eval=test。"""
+    """BCV reg train=train+valeval=test"""
 
     def _resolve_target_ids(self, is_training: bool, is_val: bool) -> list[int]:
         if is_training or is_val:
@@ -347,7 +324,7 @@ def build_dataset(cfg: Config):
 
 
 def save_loss_plot(history: dict[str, list[float]], save_dir: str, epoch: int, overwrite: bool = True):
-    """保存 v11 训练曲线。"""
+    """ v11 """
 
     save_img_dir = os.path.join(save_dir, "img")
     os.makedirs(save_img_dir, exist_ok=True)
@@ -394,7 +371,7 @@ def compute_losses(
     criterions: dict[str, nn.Module],
     cfg: Config,
 ) -> dict[str, torch.Tensor]:
-    """汇总 v11 单次前向的全部损失项。"""
+    """ v11 """
 
     loss_coarse_recon = criterions["ncc"](out["fixed_down"], out["coarse_warped_lowres"])
     loss_coarse_smooth = criterions["smooth"](out["coarse_svf_lowres"])
@@ -478,7 +455,7 @@ LOSS_KEY_MAP = {
 
 
 def build_dataloaders(cfg: Config, seed_worker_fn, data_loader_generator):
-    """基于 train/val 数据集构建 DataLoader，并统一复用随机种子设置。"""
+    """ train/val  DataLoader"""
 
     train_set, val_set = build_dataset(cfg)
     loader_kwargs = dict(
@@ -494,11 +471,11 @@ def build_dataloaders(cfg: Config, seed_worker_fn, data_loader_generator):
 
 
 def build_training_bundle(cfg: Config, device: str):
-    """构建 reg 训练所需的模型 bundle。
+    """ reg  bundle
 
-    返回：
-    - bundle: 完整模块字典，供优化器与 checkpoint 一起保存
-    - reg_model: 真正执行前向的配准主模型
+
+    - bundle:  checkpoint
+    - reg_model:
     """
 
     bundle = reg_model_lib.build_cascaded_reg_model_bundle(
@@ -515,7 +492,7 @@ def build_training_bundle(cfg: Config, device: str):
 
 
 def build_criterions():
-    """集中创建训练阶段使用的相似度与正则项。"""
+    """"""
 
     return {
         "ncc": losses_lib.NCC(win=9),
@@ -555,13 +532,13 @@ def train_one_epoch(
     criterions: dict[str, nn.Module],
     device: str,
 ):
-    """执行一轮训练。
+    """
 
-    这里负责：
-    - 前向得到 coarse/refine 两阶段输出；
-    - 汇总 loss；
-    - 反向传播与梯度裁剪；
-    - 把每个 batch 的统计量累计到 epoch meter。
+
+    -  coarse/refine
+    -  loss
+    -
+    -  batch  epoch meter
     """
 
     meters = create_meters()
@@ -623,12 +600,12 @@ def validate_one_epoch(
     criterions: dict[str, nn.Module],
     device: str,
 ):
-    """执行一轮验证。
+    """
 
-    与训练阶段不同，这里不会更新梯度，只会：
-    - 复用同一套前向与 loss 统计；
-    - 额外计算 coarse/final label 的 Dice；
-    - 为 checkpoint 选择提供验证指标。
+
+    -  loss
+    -  coarse/final label  Dice
+    -  checkpoint
     """
 
     meters = create_meters()
@@ -724,7 +701,7 @@ def save_checkpoint(
 
 
 def run_auto_inference(cfg: Config) -> None:
-    """训练结束后自动调用 reg inference，按职责拆分保存输出与测试指标。"""
+    """ reg inference"""
 
     if cfg.auto_infer_save_train_outputs:
         save_cfg = reg_infer.Config(
@@ -791,13 +768,13 @@ def update_checkpoints(
     state: dict,
     history: dict[str, list[float]],
 ):
-    """根据当前 epoch 结果更新 best-loss / best-dice / resume checkpoint。
+    """ epoch  best-loss / best-dice / resume checkpoint
 
-    逻辑关系：
-    - `best_loss` 更偏训练稳定性监控；
-    - `best_dice` 是后续自动推理默认使用的主权重；
-    - `resume_latest.pth` 用于中断续训；
-    - `wait` 配合 `patience` 实现早停。
+
+    - `best_loss`
+    - `best_dice`
+    - `resume_latest.pth`
+    - `wait`  `patience`
     """
 
     current_eval_loss = meters["train_loss"].avg if cfg.dataset_key == "BCV" else meters["val_loss"].avg
@@ -851,16 +828,16 @@ def update_checkpoints(
 
 
 def main(cfg: Config):
-    """训练总控入口。
+    """
 
-    主流程顺序：
-    1. 创建输出目录并保存最终配置；
-    2. 固定随机种子；
-    3. 检查 CUDA；
-    4. 构建模型、数据、优化器、loss 与 checkpoint 管理器；
-    5. 进入 epoch 级训练/验证循环；
-    6. 更新 best checkpoint、保存曲线并执行早停；
-    7. 若开启 `auto_infer_after_train`，训练后自动调用推理脚本。
+
+    1.
+    2.
+    3.  CUDA
+    4. loss  checkpoint
+    5.  epoch /
+    6.  best checkpoint
+    7.  `auto_infer_after_train`
     """
 
     cfg.makedirs()

@@ -1,8 +1,6 @@
 """Dataset definitions used by the OPAL-Net release.
 
-Only the datasets reported in the paper are kept in this review-stage tree:
-ADNI, OASIS, and BCV.  Other internal dataset loaders were intentionally
-removed from this file to keep the public code surface compact.
+The public release supports the ADNI, OASIS, and BCV dataset layouts.
 """
 
 from torch.utils.data import Dataset
@@ -21,7 +19,7 @@ def _stem_from_syn_path(file_path: str, suffix_key: str) -> str:
 
 
 def _adni_train_val_split(img_dir: str, val_ratio: float = 0.2, split_seed: int = 0):
-    """固定随机种子，把 ADNI Train 再切成 train / val。"""
+    """Split the ADNI training set into train and validation subsets."""
     all_img_files = sorted(f for f in os.listdir(img_dir) if f.endswith(".nii.gz"))
     n = len(all_img_files)
     if n == 0:
@@ -42,7 +40,7 @@ def _adni_train_val_split(img_dir: str, val_ratio: float = 0.2, split_seed: int 
 
 
 class ADNI_Dataset(Dataset):
-    """ADNI atlas-to-subject 配准数据集。"""
+    """ADNI atlas-to-subject """
 
     def __init__(self, source_root_dir, transform2img=None, transform2both=None, is_training=True, is_val=False, inference=False):
         self.source_root_dir = source_root_dir
@@ -131,7 +129,7 @@ class ADNI_Dataset(Dataset):
 
 
 class ADNI_Split_Dataset(Dataset):
-    """ADNI 特化配准数据集：原 Train 固定切 train/val，原 Test 作为 test。"""
+    """ADNI  Train  train/val Test  test"""
 
     def __init__(
         self,
@@ -213,7 +211,7 @@ class ADNI_Split_Dataset(Dataset):
         return source_image, target_image, source_label, target_label
 
 class ADNI_Split_Syn_Dataset(Dataset):
-    """ADNI 特化 syn 数据集：原 Train 固定切 train/val，原 Test 作为 test。"""
+    """ADNI  syn  Train  train/val Test  test"""
 
     def __init__(
         self,
@@ -349,7 +347,7 @@ class ADNI_Split_Syn_Dataset(Dataset):
 
 
 class OASIS_Dataset(Dataset):
-    """OASIS atlas-to-subject 配准数据集。"""
+    """OASIS atlas-to-subject """
 
     def __init__(
         self,
@@ -378,11 +376,11 @@ class OASIS_Dataset(Dataset):
         else:
             self.data_list = self.data_list[375:]
 
-        # 删掉 atlas，避免 target 与 atlas 重合
+        #  atlas target  atlas
         if self.atlas_data in self.data_list:
             self.data_list.remove(self.atlas_data)
 
-        # OASIS aligned_seg35 默认已是连续标签，这里保留映射接口但默认不做重映射。
+        # OASIS aligned_seg35
         self.label_mapping = {}
 
     def __len__(self) -> int:
@@ -444,7 +442,7 @@ class OASIS_Dataset(Dataset):
         return source_image, target_image, source_label, target_label
 
 class OASIS_Syn_Dataset(Dataset):
-    """OASIS seg 训练集：real(target) + reg 导出的 syn(final/coarse)。"""
+    """OASIS seg real(target) + reg  syn(final/coarse)"""
 
     def __init__(
         self,
@@ -614,11 +612,11 @@ def _bcv_kfold_train_val_ids(
 
 
 class BCV_Dataset(Dataset):
-    """BCV 配准数据集（flat 目录版本，atlas 默认固定为 27，可按需覆写）。
+    """BCV flat atlas  27
 
-    当前口径：
-    - ``train_pool``: 返回完整 24 个训练池 case，给上游 reg 一次性训练/导出。
-    - ``kfold``: 在这 24 个 case 上做可复现五折；test 仍固定 61..80。
+
+    - ``train_pool``:  24  case reg /
+    - ``kfold``:  24  case test  61..80
 
     """
 
@@ -744,11 +742,11 @@ class BCV_Dataset(Dataset):
 
 
 class BCV_Syn_Dataset(Dataset):
-    """BCV seg 训练集：real(target) + reg 导出的 syn(final_* / coarse_*).
+    """BCV seg real(target) + reg  syn(final_* / coarse_*).
 
     split_mode:
-    - ``train_pool``: 返回完整 24 个 train pool，适合先固定上游 reg 结果。
-    - ``kfold``: 在 24 个 train pool case 上做可复现五折，切分 train/val。
+    - ``train_pool``:  24  train pool reg
+    - ``kfold``:  24  train pool case  train/val
 
     """
 

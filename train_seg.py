@@ -1,13 +1,7 @@
-"""OPAL-Net 分割训练入口脚本。
+"""Train the OPAL-Net atlas-guided segmentation model.
 
-Core idea:
-- keep the v1122 syn-supervised segmentation backbone and training loop style;
-- replace dense atlas conditioning with Iris-style compact atlas task tokens;
-- align atlas-conditioned syn/real bottleneck features with unweighted MMD.
-
-这个入口脚本依赖两路数据：
-- `real_root_dir`：真实标注数据，用于 val/test 和真实分支正则；
-- `syn_root_dir`：由 reg 脚本导出的 synthetic 配准结果，用于训练主监督。
+The entry point combines synthetic registration outputs for supervision with
+real labeled data for validation, testing, and regularization.
 """
 
 from __future__ import annotations
@@ -52,28 +46,25 @@ import utils  # noqa: E402
 from model_seg import AtlasGuidedSegModel  # noqa: E402
 
 
-# 公开入口里的数据集预设。
-# 其中：
-# - `real_root_dir` 指向真实标注数据；
-# - `syn_root_dir` 指向 reg 导出的 syn 结果目录；
-# - `exp_name` 只影响输出目录命名，不直接参与数据读取。
+# Dataset presets provide neutral defaults for the public release.
+# Explicit OPAL_SEG_* environment variables override these values.
 DATASET_INFO = {
     "ADNI": {
         "real_root_dir": "../data/ADNI_Dataset",
         "syn_root_dir": "./output/Reg/ADNI_reference_reg",
-        "exp_name": "ADNI_seg_v1100",
+        "exp_name": "ADNI_seg",
         "num_classes": 4,
         "batch_size": 1,
     },
     "BCV": {
-        "real_root_dir": "../data/BCV_by_ZF/bcv_small",
+        "real_root_dir": "../data/BCV/bcv_small",
         "syn_root_dir": "./output/Reg/BCV_cascaded_reg",
         "exp_name": "BCV_seg_cascaded_reg_hd",
         "num_classes": 5,
         "batch_size": 1,
     },
     "OASIS": {
-        "real_root_dir": "../data/OASIS_by_ZF/OASIS",
+        "real_root_dir": "../data/OASIS/OASIS",
         "syn_root_dir": "./output/Reg/OASIS_cascaded_reg",
         "exp_name": "OASIS_seg_cascaded_reg_atlas_task_unet_bica_nres",
         "num_classes": 36,
@@ -94,84 +85,82 @@ def apply_dataset_preset(cfg, dataset_key: str | None):
     object.__setattr__(cfg, "dataset_key", dataset_key)
     return cfg
 
-@dataclass(frozen=True)  # python train_seg.py
+@dataclass(frozen=True)
 class Config:
-    """分割训练配置。
+    """Segmentation training configuration.
 
-    重点字段可按三层理解：
-    - 数据入口：`dataset_key / real_root_dir / syn_root_dir / syn_key`
-    - 模型结构：atlas token path、共享 atlas encoder、bottleneck residual 等
-    - 训练正则：`mmd_weight / entropy_weight / prior_weight`
+    The main groups are data paths, model structure switches, and regularizer
+    weights. Values can be overridden with OPAL_SEG_* environment variables.
     """
-    save_dir: str = ""                         # 输出目录，空则自动生成。
-    version: str = "seg"                     # 版本标识，写入 config.json。
-    syn_key: str = "final"                     # reg 导出的 syn 后缀（final/coarse）。
-    continue_train: bool = False               # 续训开关，从 resume_latest.pth 恢复。
-    save_root_dir: str = "output/Seg"          # 实验ss输出根目录。
+    save_dir: str = ""                         #
+    version: str = "seg"                     #  config.json
+    syn_key: str = "final"                     # reg  syn final/coarse
+    continue_train: bool = False               #  resume_latest.pth
+    save_root_dir: str = "output/Seg"          # ss
 
-    dataset_key: str = "BCV"                   # 数据集标识，决定 dataset 构建分支。
-    real_root_dir: str = ""                    # 真实数据根目录。
-    syn_root_dir: str = ""                     # reg 导出 syn 数据根目录。
-    exp_name: str = ""                         # 实验名，用于生成 save_dir。
-    num_classes: int = 0                       # 分割类别数（含背景）。
-    bcv_atlas_id: int | None = None            # BCV 可选 atlas id；留空时数据类内部回落到默认 27。
+    dataset_key: str = "BCV"                   #  dataset
+    real_root_dir: str = ""                    #
+    syn_root_dir: str = ""                     # reg  syn
+    exp_name: str = ""                         #  save_dir
+    num_classes: int = 0                       #
+    bcv_atlas_id: int | None = None            # Optional BCV atlas ID; defaults to 27 in the dataset loader.
 
-    base_channels: int = 16                    # UNet 基础通道数，16→32→64→128。
-    in_channels: int = 1                       # 输入图像通道数（灰度=1）。
-    batch_size: int = 1                        # 3D 显存限制，按 case 训练。
-    epochs: int = 200                          # +最大训练轮数，早停通常提前截断。
-    epoch_start: int = 0                       # 续训起始 epoch，由 checkpoint 覆盖。
-    save_every: int = 20                       # 周期性 checkpoint 保存间隔。
-    patience: int = 30                         # early stopping 等待轮数。
-    early_stop_min_delta: float = 0.0005      # Dice 提升超过此值才算改善。
-    num_workers: int = 0                       # DataLoader 子进程数，0=主进程加载。
-    amp_enabled: bool = False # True                  # 混合精度训练开关。
-    max_grad_norm: float = 3.0                # 梯度裁剪阈值。
-    plot_overwrite: bool = True                # 训练曲线是否覆盖最新图。
-    student_dropout: float = 0.0               # UNet 内 Dropout3d 概率。
-    downsample_factor: int = 1               # 训练/验证/测试前统一下采样倍数；1 表示原尺寸。
-    lr: float = 5e-4#                             # Adam 初始学习率。zz
-    weight_decay: float = 1e-3# 1e-5 #                 # 权重衰减系数。
-    seed: int = 42 # random.randint(0, 2**31 - 1)   # 随机种子，默认随机。
+    base_channels: int = 16                    # UNet 163264128
+    in_channels: int = 1                       # =1
+    batch_size: int = 1                        # 3D  case
+    epochs: int = 200                          # +
+    epoch_start: int = 0                       #  epoch checkpoint
+    save_every: int = 20                       #  checkpoint
+    patience: int = 30                         # early stopping
+    early_stop_min_delta: float = 0.0005      # Dice
+    num_workers: int = 0                       # DataLoader 0=
+    amp_enabled: bool = False # True                  #
+    max_grad_norm: float = 3.0                #
+    plot_overwrite: bool = True                #
+    student_dropout: float = 0.0               # UNet  Dropout3d
+    downsample_factor: int = 1               # //1
+    lr: float = 5e-4#                             # Adam zz
+    weight_decay: float = 1e-3# 1e-5 #                 #
+    seed: int = 42 # random.randint(0, 2**31 - 1)   #
 
-    # 组件相关参数
-    seg_weight: float =  0.5                  # 分割主损失总系数。
-    ce_weight: float = 1.0                    # CE 在主损失中的权重。
-    dice_weight: float = 1#1.0                # Dice 在主损失中的权重。
+    #
+    seg_weight: float =  0.5                  #
+    ce_weight: float = 1.0                    # CE
+    dice_weight: float = 1#1.0                # Dice
 
-    atlas_label_embed_channels: int = 8        # atlas label embedding 通道数。
-    context_query_tokens: int = 48# 8          # context query token 数量。
-    context_shuffle_factor: int = 2            # pixel shuffle 因子，控制 mask 融合尺度。
-    atlas_task_dropout: float = 0.0            # task encoder 内 dropout。
-    attn_heads: int = 8                        # cross-attention 头数。
-    attn_dropout: float = 0.0                  # attention dropout 概率。
-    attn_gate_init: float = -4.0               # attention gate 初始值（负值=默认关闭）。 目前未启用
-    enable_atlas_token_path: bool = True       # True=启用 atlas token path；False=退化为无 token 对照。
-    share_atlas_encoder_with_seg: bool = False  # True=atlas 共享 seg encoder；False=atlas 使用独立 encoder。
-    bottleneck_ctx_residual_weights: tuple[float, float] = (1.0, 1.0)  # bottleneck 输出 = a * image_feat + b * atlas_delta。
+    atlas_label_embed_channels: int = 8        # atlas label embedding
+    context_query_tokens: int = 48# 8          # context query token
+    context_shuffle_factor: int = 2            # pixel shuffle  mask
+    atlas_task_dropout: float = 0.0            # task encoder  dropout
+    attn_heads: int = 8                        # cross-attention
+    attn_dropout: float = 0.0                  # attention dropout
+    attn_gate_init: float = -4.0               # attention gate =
+    enable_atlas_token_path: bool = True       # True= atlas token pathFalse= token
+    share_atlas_encoder_with_seg: bool = False  # True=atlas  seg encoderFalse=atlas  encoder
+    bottleneck_ctx_residual_weights: tuple[float, float] = (1.0, 1.0)  # bottleneck  = a * image_feat + b * atlas_delta
 
-    entropy_weight: float = 0.1# 0.05              # real 分支熵最小化权重，>0 时抑制未标注预测的不确定性。
-    prior_weight: float = 0.1                 # real 分支类别比例先验权重，>0 时约束预测的类别边际分布。
-    prior_include_background: bool = False    # False 时只约束前景类比例，避免背景占比过大主导正则。
-    prior_smoothing: float = 1e-4             # 类别比例平滑项，避免某类在 batch 中缺失时 KL 发散。
+    entropy_weight: float = 0.1# 0.05              # real >0
+    prior_weight: float = 0.1                 # real >0
+    prior_include_background: bool = False    # False
+    prior_smoothing: float = 1e-4             #  batch  KL
 
-    mmd_weight: tuple[float, ...] = (0.1, 0.1, 0.1)#     # 多层 MMD 对齐权重，逐项对应 mmd_layer_idx。
-    mmd_layer_idx: tuple[int, ...] = (3, 4, 5)#          # MMD 对齐的特征层索引，默认 bottleneck。
-    mmd_warmup_epochs: int = 0                 # MMD 预热轮数，前 N 轮不计算 MMD。
+    mmd_weight: tuple[float, ...] = (0.1, 0.1, 0.1)#     #  MMD  mmd_layer_idx
+    mmd_layer_idx: tuple[int, ...] = (3, 4, 5)#          # MMD  bottleneck
+    mmd_warmup_epochs: int = 0                 # MMD  N  MMD
     # -------------------
 
-    auto_infer_after_train: bool = True        # 训练结束自动跑 inference。  python train_seg.py
-    auto_infer_export_val: bool = False        # 推理时评估 val split。
-    auto_infer_export_test: bool = True        # 推理时评估 test split。
-    auto_infer_compute_hd95: bool = True       # 是否补算 HD95 指标。
-    auto_infer_checkpoint_name: str = "best_dice"  # 推理用的 checkpoint 别名。
-    auto_infer_save_pred_label: bool = False   # 是否保存预测 nii 文件。
+    auto_infer_after_train: bool = True        #  inference  python train_seg.py
+    auto_infer_export_val: bool = False        #  val split
+    auto_infer_export_test: bool = True        #  test split
+    auto_infer_compute_hd95: bool = True       #  HD95
+    auto_infer_checkpoint_name: str = "best_dice"  #  checkpoint
+    auto_infer_save_pred_label: bool = False   #  nii
 
     @classmethod
     def from_env(cls):
-        """从 `OPAL_SEG_*` 环境变量构建训练配置。
+        """ `OPAL_SEG_*`
 
-        规则与 reg 入口一致：先应用 `dataset_key` 预设，再让显式环境变量逐项覆盖。
+         reg  `dataset_key`
         """
 
         cfg = cls()
@@ -249,7 +238,7 @@ class Config:
         return cfg
 
     def validate(self) -> None:
-        """在训练启动前检查配置组合是否合法。"""
+        """"""
 
         if len(self.bottleneck_ctx_residual_weights) != 2:
             raise ValueError(
@@ -394,7 +383,7 @@ def build_base_datasets(cfg: Config):
 
 
 def get_effective_mmd_weights(cfg: Config, epoch: int) -> tuple[float, ...]:
-    """根据 warmup 轮数返回当前 epoch 实际生效的多层 MMD 权重。"""
+    """ warmup  epoch  MMD """
 
     if cfg.mmd_warmup_epochs <= 0:
         return tuple(cfg.mmd_weight)
@@ -407,7 +396,7 @@ def get_effective_mmd_weight_sum(cfg: Config, epoch: int) -> float:
 
 
 def compute_entropy_minimization_loss(logits: torch.Tensor) -> torch.Tensor:
-    """真实分支的熵最小化正则，抑制未标注预测的高不确定性。"""
+    """"""
 
     probs = torch.softmax(logits, dim=1)
     entropy = -(probs * torch.log(probs.clamp_min(1e-8))).sum(dim=1)
@@ -422,10 +411,10 @@ def compute_class_ratio_prior_loss(
     smoothing: float = 1e-4,
     eps: float = 1e-8,
 ) -> torch.Tensor:
-    """真实分支的类别比例先验正则。
+    """
 
-    它把 real 分支的预测类别边际分布拉向 syn 监督标签的类别比例，
-    用来减少明显失衡或塌缩的预测。
+     real  syn
+
     """
 
     probs = torch.softmax(logits, dim=1)
@@ -453,13 +442,13 @@ def compute_losses_seg(
     cfg: Config,
     effective_mmd_weights: tuple[float, ...],
 ):
-    """汇总分割训练的总 loss。
+    """ loss
 
-    组成包括：
-    - `loss_seg`：syn 监督主损失（CE + Dice）
-    - `loss_mmd`：syn/real 特征对齐
-    - `loss_entropy`：真实分支熵最小化
-    - `loss_prior`：真实分支类别比例先验
+
+    - `loss_seg`syn CE + Dice
+    - `loss_mmd`syn/real
+    - `loss_entropy`
+    - `loss_prior`
     """
 
     syn_logits = out["syn_logits"]
@@ -509,7 +498,7 @@ def compute_losses_seg(
 
 
 def save_loss_plot(history: dict[str, list[float]], save_dir: str, overwrite: bool = True):
-    """保存训练曲线，供实验期间快速查看收敛状态。"""
+    """"""
 
     if plt is None:
         return
@@ -553,7 +542,7 @@ def save_loss_plot(history: dict[str, list[float]], save_dir: str, overwrite: bo
 
 
 def run_auto_inference(cfg: Config):
-    """训练结束后自动调用 `inference_seg.py` 做 val/test 推理与指标汇总。"""
+    """ `inference_seg.py`  val/test """
 
     infer_cfg = seg_infer.Config(
         model_dir=cfg.save_dir,
@@ -581,15 +570,15 @@ def run_auto_inference(cfg: Config):
 
 
 def main(cfg: Config):
-    """分割训练总控入口。
+    """
 
-    主流程顺序：
-    1. 校验配置、创建输出目录、保存配置、固定随机种子；
-    2. 构建模型、优化器和 atlas cache；
-    3. 构建 train/val/test DataLoader；
-    4. epoch 内先训练，再在 val 上评估，最后记录 test 摘要；
-    5. 根据 best loss / best dice 保存 checkpoint，并执行早停；
-    6. 即使 `epochs=0`，后面的 test 汇总与自动推理分支仍可能执行。
+
+    1.
+    2.  atlas cache
+    3.  train/val/test DataLoader
+    4. epoch  val  test
+    5.  best loss / best dice  checkpoint
+    6.  `epochs=0` test
     """
 
     cfg.validate()
@@ -603,7 +592,7 @@ def main(cfg: Config):
     device = "cuda"
     amp_enabled = cfg.amp_enabled
 
-    # 这里是公开版 seg 主模型入口，atlas token path 等结构开关都在这里生效。
+    #  seg atlas token path
     model = AtlasGuidedSegModel(
         in_channels=cfg.in_channels,
         out_channels=cfg.num_classes,
@@ -626,8 +615,8 @@ def main(cfg: Config):
     train_set, val_set, test_set = build_base_datasets(cfg)
     atlas_image_cpu = None
     atlas_label_cpu = None
-    # atlas token path 开启时，先从验证集样本缓存 atlas image/label，
-    # 后续训练/验证/测试按当前空间尺寸动态复用。
+    # atlas token path  atlas image/label
+    # //
     if cfg.enable_atlas_token_path:
         atlas_image_cpu, atlas_label_cpu = build_atlas_cache_from_sample(val_set[0])
 
@@ -736,7 +725,7 @@ def main(cfg: Config):
         effective_mmd_weight_sum = float(sum(effective_mmd_weights))
         pbar = tqdm(train_loader, total=len(train_loader), desc=f"Epoch {epoch + 1}/{cfg.epochs}", leave=False)
         for batch in pbar:
-            # train 阶段用 syn 分支做主监督；只有在 MMD/熵/先验正则开启时才需要 real 分支前向。
+            # train  syn  MMD// real
             real_image = batch[0].to(device)
             syn_image = batch[2].to(device)
             syn_label = batch[3].to(device)
@@ -812,7 +801,7 @@ def main(cfg: Config):
         history["train_atlas_prior_token_norm"].append(train_token_norm_meter.avg)
         history["effective_mmd_weight"].append(effective_mmd_weight_sum)
 
-        # 每个 epoch 训练结束后，马上在 val split 上评估，用于挑选 best checkpoint。
+        #  epoch  val split  best checkpoint
         model.eval()
         val_loss_meter = utils.AverageMeter()
         val_ce_meter = utils.AverageMeter()
@@ -820,7 +809,7 @@ def main(cfg: Config):
         val_real_dice_meter = utils.AverageMeter()
 
         with torch.inference_mode():
-            # val 始终只在真实标注数据上评估，作为 checkpoint 选择依据。
+            # val  checkpoint
             pbar_val = tqdm(val_loader, total=len(val_loader), desc=f"Val {epoch + 1}/{cfg.epochs}", leave=False)
             for batch in pbar_val:
                 real_image = batch[1].to(device)

@@ -1,10 +1,7 @@
-"""OPAL-Net 分割推理 / 评估入口脚本。
+"""Run atlas-guided segmentation inference and compute evaluation metrics.
 
-它不仅做分割推理，还负责：
-- per-class Dice 汇总；
-- HD95 统计；
-- 预测标签 NIfTI 导出；
-- atlas token cache 的创建、复用与失效检查。
+The script supports Dice, HD95, prediction-label export, and atlas-token
+caching for repeated inference runs.
 """
 
 from __future__ import annotations
@@ -47,39 +44,39 @@ def _list_nifti_files(dir_path: Path) -> list[Path]:
 
 @dataclass(frozen=True)
 class Config:
-    """分割推理配置。
+    """
 
-    其中：
-    - `model_dir` 指向训练输出目录，是回填训练配置和查找 checkpoint 的核心入口；
-    - `export_train/val/test` 决定哪些 split 要执行推理；
-    - `save_pred_label*` 只控制是否把预测标签写盘，不影响是否计算 Dice；
+
+    - `model_dir`  checkpoint
+    - `export_train/val/test`  split
+    - `save_pred_label*`  Dice
     - `hd95_mode / hd95_use_saved_pred / force_rebuild_atlas_token_cache`
-      则决定 HD95 统计口径和 atlas token cache 的使用方式。
+       HD95  atlas token cache
     """
     model_dir: str = "./output/Seg/OASIS_seg_cascaded_reg"
     checkpoint_name: str = "best_dice"
 
-    export_train: bool = False          # 是否导出 train 划分的推理指标。
-    export_val: bool = False            # 是否导出 val 划分的推理指标。
-    export_test: bool = True            # 是否导出 test 划分的推理指标。
-    compute_hd95: bool = True              # 推理时是否计算 HD95。
-    hd95_mode: str = "monai_mean"           # "per_class_mean"  # HD95 统计口径：逐类均值或 MONAI 直接聚合。
-    save_pred_label: bool = True           # 全局开关：对已导出的划分保存预测标签。
-    save_pred_label_train: bool = False      # 是否保存 train 划分的预测标签。
-    save_pred_label_val: bool = False       # 是否保存 val 划分的预测标签。
-    save_pred_label_test: bool = True      # 是否保存 test 划分的预测标签。
-    hd95_use_saved_pred: bool = True        # True=第二轮从已保存预测读取；False=第二轮重新推理。
-    atlas_token_cache_name: str = "inference_seg_atlas_token_cache.pt"  # atlas prior token 磁盘缓存文件名。
-    force_rebuild_atlas_token_cache: bool = False  # True=忽略已有 cache，启动时重建 atlas prior token。
+    export_train: bool = False          #  train
+    export_val: bool = False            #  val
+    export_test: bool = True            #  test
+    compute_hd95: bool = True              #  HD95
+    hd95_mode: str = "monai_mean"           # "per_class_mean"  # HD95  MONAI
+    save_pred_label: bool = True           #
+    save_pred_label_train: bool = False      #  train
+    save_pred_label_val: bool = False       #  val
+    save_pred_label_test: bool = True      #  test
+    hd95_use_saved_pred: bool = True        # True=False=
+    atlas_token_cache_name: str = "inference_seg_atlas_token_cache.pt"  # atlas prior token
+    force_rebuild_atlas_token_cache: bool = False  # True= cache atlas prior token
 
-    downsample_factor: int = 1      # 推理评估前统一下采样倍数；1 表示原尺寸。
-    batch_size: int = 1             # 为了逐 case 记录指标，这里应保持为 1。
-    num_workers: int = 0            # 推理时 DataLoader 的 worker 数。
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"  # 推理使用的设备。
-    wait_cuda_memory_release: bool = True       # 每个 case 后是否等待 CUDA 显存回落。
-    cuda_memory_wait_timeout_sec: float = 60.0  # 等待 CUDA 显存释放的最长时间。
-    cuda_memory_wait_poll_sec: float = 0.1      # 轮询 CUDA 显存释放的时间间隔。
-    cuda_memory_wait_tolerance_mb: float = 64.0  # 相对基线允许残留的显存容差。
+    downsample_factor: int = 1      # 1
+    batch_size: int = 1             #  case  1
+    num_workers: int = 0            #  DataLoader  worker
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"  #
+    wait_cuda_memory_release: bool = True       #  case  CUDA
+    cuda_memory_wait_timeout_sec: float = 60.0  #  CUDA
+    cuda_memory_wait_poll_sec: float = 0.1      #  CUDA
+    cuda_memory_wait_tolerance_mb: float = 64.0  #
 
     dataset_key: str | None = None
     real_root_dir: str | None = None
@@ -102,7 +99,7 @@ class Config:
 
     @classmethod
     def from_env(cls):
-        """从 `OPAL_SEG_INF_*` 环境变量读取推理配置。"""
+        """ `OPAL_SEG_INF_*` """
 
         cfg = cls()
 
@@ -159,11 +156,11 @@ class Config:
         return cfg
 
     def resolve_from_training_config(self) -> None:
-        """从训练目录回填结构参数。
+        """
 
-        原因是 seg 推理所需的很多字段并不只是“数值超参”，而是直接决定模型结构：
-        例如 `base_channels / context_query_tokens / share_atlas_encoder_with_seg`。
-        这些项如果和训练期不一致，checkpoint 即使能加载，推理语义也会出错。
+         seg
+         `base_channels / context_query_tokens / share_atlas_encoder_with_seg`
+        checkpoint
         """
 
         cfg_path = os.path.join(self.model_dir, "config.json")
@@ -311,15 +308,15 @@ def _atlas_shape_key(spatial_shape: tuple[int, int, int]) -> str:
 
 
 def atlas_token_cache_path(cfg: Config) -> str:
-    """返回 atlas token 磁盘缓存路径。"""
+    """ atlas token """
 
     return os.path.join(cfg.model_dir, cfg.atlas_token_cache_name)
 
 
 def build_atlas_token_cache_meta(cfg: Config, ckpt_path: str) -> dict[str, object]:
-    """构建 cache 元信息。
+    """ cache
 
-    只要 checkpoint、数据集或 atlas token 相关开关变化，旧 cache 就应视为失效。
+     checkpoint atlas token  cache
     """
 
     return {
@@ -334,7 +331,7 @@ def build_atlas_token_cache_meta(cfg: Config, ckpt_path: str) -> dict[str, objec
 
 
 def load_atlas_token_cache(cache_path: str, expected_meta: dict[str, object]) -> dict[str, object]:
-    """加载 atlas token cache；若元信息不匹配，则返回空 cache。"""
+    """ atlas token cache cache"""
 
     if not os.path.exists(cache_path):
         return {"meta": dict(expected_meta), "tokens": {}}
@@ -353,7 +350,7 @@ def load_atlas_token_cache(cache_path: str, expected_meta: dict[str, object]) ->
 
 
 def save_atlas_token_cache(cache_path: str, cache_state: dict[str, object]) -> None:
-    """把不同空间尺寸下的 atlas prior tokens 持久化到磁盘。"""
+    """ atlas prior tokens """
 
     payload = {
         "meta": dict(cache_state.get("meta", {})),
@@ -388,12 +385,12 @@ def get_or_create_atlas_prior_tokens(
     cache_state: dict[str, object] | None,
     cache_path: str | None,
 ):
-    """按当前空间尺寸获取 atlas prior tokens。
+    """ atlas prior tokens
 
-    优先顺序：
-    1. 先查内存 / 磁盘 cache；
-    2. 若没有，再现算一次；
-    3. 现算结果会立刻回写 cache，供后续 split/case 复用。
+
+    1.  /  cache
+    2.
+    3.  cache split/case
     """
 
     if not cfg.enable_atlas_token_path or cfg.disable_atlas_token_path_infer:
@@ -449,10 +446,10 @@ def prewarm_atlas_token_cache(
     cache_state: dict[str, object],
     cache_path: str,
 ):
-    """根据待导出的 split 预热 atlas token cache。
+    """ split  atlas token cache
 
-    这样做的目的不是改变结果，而是把“首次遇到新尺寸时的 token 计算开销”
-    提前到启动阶段，减少逐 case 推理时的抖动。
+     token
+     case
     """
 
     if not cfg.enable_atlas_token_path or cfg.disable_atlas_token_path_infer:
@@ -653,13 +650,13 @@ def evaluate_split_dice(
     token_cache_state: dict[str, object] | None,
     token_cache_file: str | None,
 ):
-    """执行一个 split 的 Dice 评估与可选标签导出。
+    """ split  Dice
 
-    这一层负责：
-    - 逐 case 推理；
-    - 计算 per-class Dice；
-    - 汇总成 split 级别的 per-class / overall 统计；
-    - 需要时把预测标签写到 `inference_seg_<split>_label/`。
+
+    -  case
+    -  per-class Dice
+    -  split  per-class / overall
+    -  `inference_seg_<split>_label/`
     """
 
     loader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=False, num_workers=cfg.num_workers, pin_memory=False)
@@ -763,11 +760,11 @@ def evaluate_split_hd95(
     token_cache_state: dict[str, object] | None,
     token_cache_file: str | None,
 ):
-    """执行一个 split 的 HD95 评估。
+    """ split  HD95
 
-    支持两种来源：
-    - 直接复用已经写盘的预测标签；
-    - 或者在 HD95 阶段重新跑一次推理。
+
+    -
+    -  HD95
     """
 
     class_ids = list(range(1, cfg.num_classes))
@@ -907,7 +904,7 @@ def evaluate_split_hd95(
 
 
 def merge_split_metric_summaries(dice_summary: dict, hd95_summary: dict) -> dict:
-    """把 Dice 与 HD95 两套 split 级统计合并成统一摘要。"""
+    """ Dice  HD95  split """
 
     merged_cases: dict[str, dict] = {}
     for item in dice_summary.get("per_case", []):
@@ -938,9 +935,9 @@ def evaluate_split(
     token_cache_state: dict[str, object] | None,
     token_cache_file: str | None,
 ):
-    """一个 split 的完整评估入口。
+    """ split
 
-    先跑 Dice，再跑 HD95，最后把两套结果合并成单个 `inference_seg_<split>_metrics.json`。
+     Dice HD95 `inference_seg_<split>_metrics.json`
     """
 
     pred_dir = os.path.join(cfg.model_dir, f"inference_seg_{split_name}_label")
@@ -981,14 +978,14 @@ def evaluate_split(
 
 
 def main(cfg: Config) -> None:
-    """分割推理总控入口。
+    """
 
-    主流程顺序：
-    1. 解析推理配置并回填训练配置；
-    2. 恢复 checkpoint，必要时按权重内容修正结构开关；
-    3. 构建模型、数据集以及 atlas token cache；
-    4. 按 split 执行推理、导出和指标统计；
-    5. 最终把总摘要写入 `inference_seg_metrics_summary.json`。
+
+    1.
+    2.  checkpoint
+    3.  atlas token cache
+    4.  split
+    5.  `inference_seg_metrics_summary.json`
     """
 
     object.__setattr__(cfg, "model_dir", str(Path(cfg.model_dir).resolve()))
@@ -1032,7 +1029,7 @@ def main(cfg: Config) -> None:
     model.eval()
     print(f"Loaded checkpoint: {ckpt_path}")
 
-    # atlas token cache 以“checkpoint + 关键结构开关 + downsample_factor”为失效边界。
+    # atlas token cache checkpoint +  + downsample_factor
     token_cache_file = atlas_token_cache_path(cfg)
     token_cache_meta = build_atlas_token_cache_meta(cfg, ckpt_path)
     token_cache_state = load_atlas_token_cache(token_cache_file, token_cache_meta)

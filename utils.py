@@ -1,9 +1,4 @@
-"""OPAL-Net 通用工具模块。
-
-职责划分：
-- 提供训练日志、checkpoint、early stopping 等工程辅助能力；
-- 提供若干医学图像任务常用指标与 warp 工具；
-- 尽量保持“轻依赖、可复用”，避免和某个具体实验脚本强耦合。
+"""Shared training utilities, metrics, and 3D warping helpers.
 """
 
 from __future__ import annotations
@@ -18,7 +13,7 @@ import torch.nn.functional as F
 
 
 class AverageMeter:
-    """累计标量并维护当前值、均值和标准差。"""
+    """Track the current value, running mean, and standard deviation."""
 
     def __init__(self):
         self.reset()
@@ -35,33 +30,33 @@ class AverageMeter:
         self.val = val
         self.sum += val * n
         self.count += n
-        self.avg = self.sum / self.count  # 运行均值，供进度条和 epoch 汇总直接读取
+        self.avg = self.sum / self.count  #  epoch
         self.vals.append(val)
-        self.std = np.std(self.vals)      # 保留离散度，便于后续扩展调试统计
+        self.std = np.std(self.vals)      #
 
 
 class SpatialTransformer(nn.Module):
-    """N-D 空间变换层，内部使用 `grid_sample` 实现 backward warping。"""
+    """N-D  `grid_sample`  backward warping"""
 
     def __init__(self, size, mode: str = "bilinear"):
         super().__init__()
         self.mode = mode
 
-        # 预先构建规则采样网格，后续 forward 只需叠加位移场即可。
+        #  forward
         vectors = [torch.arange(0, s) for s in size]
         grid = torch.stack(torch.meshgrid(*vectors, indexing="ij")).unsqueeze(0).float()
-        self.register_buffer("grid", grid)  # buffer 会跟随 module.to(device) 自动迁移
+        self.register_buffer("grid", grid)  # buffer  module.to(device)
 
     def forward(self, src: torch.Tensor, flow: torch.Tensor) -> torch.Tensor:
         new_locs = self.grid + flow
         shape = flow.shape[2:]
 
-        # `grid_sample` 需要 [-1, 1] 归一化坐标，因此逐维缩放。
+        # `grid_sample`  [-1, 1]
         for dim_idx, dim_size in enumerate(shape):
             denom = max(dim_size - 1, 1)
             new_locs[:, dim_idx, ...] = 2.0 * (new_locs[:, dim_idx, ...] / denom - 0.5)
 
-        # `grid_sample` 约定通道在最后一维，且 3D 情况下顺序为 x/y/z。
+        # `grid_sample`  3D  x/y/z
         if len(shape) == 2:
             new_locs = new_locs.permute(0, 2, 3, 1)[..., [1, 0]]
         elif len(shape) == 3:
@@ -71,11 +66,11 @@ class SpatialTransformer(nn.Module):
 
 
 class register_model(nn.Module):
-    """对旧训练代码保留的 warp 包装器。
+    """ warp
 
-    输入约定：
-    - `x[0]`: 待重采样图像
-    - `x[1]`: 位移场 / flow
+
+    - `x[0]`:
+    - `x[1]`:  / flow
     """
 
     def __init__(self, img_size=(64, 256, 256), mode: str = "bilinear"):
@@ -83,20 +78,20 @@ class register_model(nn.Module):
         self.spatial_trans = SpatialTransformer(img_size, mode)
 
     def forward(self, x):
-        img, flow = x  # 保持旧接口形式，方便历史脚本直接复用
+        img, flow = x  #
         return self.spatial_trans(img, flow)
 
 
 class EarlyStopping:
-    """基于验证指标的早停器。"""
+    """"""
 
     def __init__(self, patience: int = 20, verbose: bool = False, delta: float = 0.0):
-        self.patience = patience  # 连续多少个 epoch 无提升后停止
+        self.patience = patience  #  epoch
         self.verbose = verbose
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.delta = delta        # 提升幅度至少超过该阈值才算有效
+        self.delta = delta        #
 
     def __call__(self, val_score: float) -> None:
         if self.best_score is None:
@@ -113,17 +108,17 @@ class EarlyStopping:
 
 
 class Logger:
-    """将 stdout 同步写入日志文件，防止训练中途信息丢失。"""
+    """ stdout """
 
     def __init__(self, save_dir: str):
         self.terminal = sys.stdout
-        self.log = open(os.path.join(save_dir, "logfile.log"), "a", buffering=1)  # 行缓冲降低断电丢日志风险
+        self.log = open(os.path.join(save_dir, "logfile.log"), "a", buffering=1)  #
 
     def write(self, message: str) -> None:
         self.terminal.write(message)
         self.log.write(message)
         if message.endswith("\n"):
-            self.flush()  # epoch/batch 结束时及时落盘
+            self.flush()  # epoch/batch
 
     def flush(self) -> None:
         self.terminal.flush()
@@ -132,12 +127,12 @@ class Logger:
 
 
 class CheckpointManager:
-    """统一管理训练断点、最优权重与 AMP 状态。"""
+    """ AMP """
 
     def __init__(self, save_dir: str, amp_enabled: bool):
         self.save_dir = save_dir
         self.amp_enabled = amp_enabled
-        self.resume_path = os.path.join(save_dir, "resume_latest.pth")  # 固定为“可续训入口”
+        self.resume_path = os.path.join(save_dir, "resume_latest.pth")  #
 
     def _dump_model_states(self, model) -> dict:
         if isinstance(model, dict):
@@ -188,7 +183,7 @@ class CheckpointManager:
             "pth_best_loss": pth_best_loss,
             "pth_best_dice": pth_best_dice,
             "wait": wait,
-            "history": history,  # 保留曲线历史，resume 后可以继续画完整图
+            "history": history,  # resume
         }
         payload.update(self._dump_model_states(model))
         payload.update(self._dump_optimizer_states(optimizer))
@@ -269,7 +264,7 @@ class CheckpointManager:
 
 
 def adjust_learning_rate(optimizer, epoch: int, max_epochs: int, base_lr: float) -> float:
-    """多项式衰减学习率，并返回本轮实际使用的 lr。"""
+    """ lr"""
 
     lr = round(base_lr * (1 - epoch / max_epochs) ** 0.9, 8)
     for param_group in optimizer.param_groups:
@@ -278,7 +273,7 @@ def adjust_learning_rate(optimizer, epoch: int, max_epochs: int, base_lr: float)
 
 
 def dice_val(y_pred: torch.Tensor, y_true: torch.Tensor, num_clus: int) -> torch.Tensor:
-    """计算多分类 Dice，默认忽略背景类。"""
+    """ Dice"""
 
     y_pred = nn.functional.one_hot(y_pred, num_classes=num_clus)
     y_pred = torch.squeeze(y_pred, 1)
@@ -288,14 +283,14 @@ def dice_val(y_pred: torch.Tensor, y_true: torch.Tensor, num_clus: int) -> torch
     y_true = torch.squeeze(y_true, 1)
     y_true = y_true.permute(0, 4, 1, 2, 3).contiguous()
 
-    y_pred = y_pred[:, 1:]  # 背景通常不参与医学分割主指标
+    y_pred = y_pred[:, 1:]  #
     y_true = y_true[:, 1:]
     intersection = y_pred * y_true
     intersection = intersection.sum(dim=[2, 3, 4])
     union = y_pred.sum(dim=[2, 3, 4]) + y_true.sum(dim=[2, 3, 4])
     dsc = (2.0 * intersection) / (union + 1e-5)
 
-    # 双空类不参与均值；若整例 foreground 都为空，则按 1.0 记，避免把“无器官”样本错误压成 0。
+    #  foreground  1.0  0
     valid_mask = union > 0
     valid_count = valid_mask.sum(dim=1)
     dsc = dsc * valid_mask
@@ -313,7 +308,7 @@ def multi_class_dice_coefficient(
     num_classes: int,
     include_background: bool = False,
 ) -> tuple[list[float], float]:
-    """基于 numpy 计算逐类 Dice 和平均 Dice。"""
+    """ numpy  Dice  Dice"""
 
     dice_coefficients = []
     start_cls = 0 if include_background else 1
@@ -332,11 +327,11 @@ def multi_class_dice_coefficient(
 
 
 def warp_3d(src: torch.Tensor, flow: torch.Tensor, mode: str = "bilinear") -> torch.Tensor:
-    """对 3D 张量执行重采样/形变。
+    """ 3D /
 
-    说明：
-    - `flow` 采用体素坐标位移，而不是归一化坐标位移；
-    - 返回值与 `src` 形状一致，可直接作为 warped image / warped label 使用。
+
+    - `flow`
+    -  `src`  warped image / warped label
     """
 
     batch_size, _, depth, height, width = flow.shape
@@ -351,5 +346,5 @@ def warp_3d(src: torch.Tensor, flow: torch.Tensor, mode: str = "bilinear") -> to
     loc[:, 0] = 2.0 * (loc[:, 0] / max(depth - 1, 1) - 0.5)
     loc[:, 1] = 2.0 * (loc[:, 1] / max(height - 1, 1) - 0.5)
     loc[:, 2] = 2.0 * (loc[:, 2] / max(width - 1, 1) - 0.5)
-    grid_norm = loc.permute(0, 2, 3, 4, 1)[..., [2, 1, 0]]  # `grid_sample` 期望 x/y/z 顺序
+    grid_norm = loc.permute(0, 2, 3, 4, 1)[..., [2, 1, 0]]  # `grid_sample`  x/y/z
     return F.grid_sample(src, grid_norm, mode=mode, align_corners=True)

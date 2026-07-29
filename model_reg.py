@@ -1,9 +1,4 @@
-"""OPAL-Net reg 模型实现。
-
-设计目标：
-- 以 `v8` 主链为基础迁移到 `v9`；
-- reg 保留 `A + B` 的 coarse-to-fine 主体，但移除 B 的 domain / uncertainty 结构；
-- 去掉实验性兼容层，保持主链扁平。
+"""Neural network components for cascaded OPAL-Net registration.
 """
 
 from __future__ import annotations
@@ -14,10 +9,10 @@ import torch.nn.functional as F
 
 
 # ==============================
-# Reg 基础组件
+# Reg
 # ==============================
 class SpatialTransformer(nn.Module):
-    """3D 重采样层（backward warping，基于 grid_sample）。"""
+    """3D backward warping grid_sample"""
 
     def __init__(self, size, mode: str = "bilinear", padding_mode: str = "border"):
         super().__init__()
@@ -31,7 +26,7 @@ class SpatialTransformer(nn.Module):
     def forward(self, src: torch.Tensor, flow: torch.Tensor) -> torch.Tensor:
         new_locs = self.grid + flow
         shape = flow.shape[2:]
-        # `grid_sample` 使用归一化坐标，因此这里把 voxel 坐标映射到 [-1, 1]。
+        # `grid_sample`  voxel  [-1, 1]
         for i in range(len(shape)):
             denom = max(shape[i] - 1, 1)
             new_locs[:, i, ...] = 2.0 * (new_locs[:, i, ...] / denom - 0.5)
@@ -46,7 +41,7 @@ class SpatialTransformer(nn.Module):
 
 
 class VecInt(nn.Module):
-    """SVF -> flow 的 scaling-and-squaring 积分器。"""
+    """SVF -> flow  scaling-and-squaring """
 
     def __init__(self, inshape, nsteps: int = 7):
         super().__init__()
@@ -62,7 +57,7 @@ class VecInt(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    """基础 3D 卷积块：Conv3d + IN + LeakyReLU。"""
+    """ 3D Conv3d + IN + LeakyReLU"""
 
     def __init__(self, in_channels: int, out_channels: int, stride: int = 1):
         super().__init__()
@@ -77,7 +72,7 @@ class ConvBlock(nn.Module):
 
 
 class SharedEncoder(nn.Module):
-    """多尺度共享编码器（每层 stride=2 下采样）。"""
+    """ stride=2 """
 
     def __init__(self, in_channels: int = 1, channels: tuple[int, int, int, int] = (16, 32, 64, 96)):
         super().__init__()
@@ -96,7 +91,7 @@ class SharedEncoder(nn.Module):
 
 
 class DualDecoder(nn.Module):
-    """Stage A 解码器：融合 moving/fixed skip，逐级恢复分辨率。"""
+    """Stage A  moving/fixed skip"""
 
     def __init__(
         self,
@@ -136,7 +131,7 @@ class DualDecoder(nn.Module):
 
 
 class DualDecoder3Level(nn.Module):
-    """三层版 Stage A 解码器，配合浅层 coarse encoder 使用。"""
+    """ Stage A  coarse encoder """
 
     def __init__(
         self,
@@ -173,7 +168,7 @@ class DualDecoder3Level(nn.Module):
 
 
 class GuidedDecoder(nn.Module):
-    """Stage B 解码器：common skip + guided diff skip。"""
+    """Stage B common skip + guided diff skip"""
 
     def __init__(
         self,
@@ -213,10 +208,10 @@ class GuidedDecoder(nn.Module):
 
 
 # ==============================
-# Reg v8 主干
+# Registration architecture
 # ==============================
 class CoarseRegistrationStage(nn.Module):
-    """Stage A：全局粗配准。"""
+    """Stage A"""
 
     def __init__(
         self,
@@ -258,7 +253,7 @@ class CoarseRegistrationStage(nn.Module):
 
 
 class RegVM0000Model(nn.Module):
-    """v0000：最基础的单阶段 VoxelMorph 风格配准。"""
+    """v0000 VoxelMorph """
 
     def __init__(
         self,
@@ -307,7 +302,7 @@ class RegVM0000Model(nn.Module):
 
 
 class DualBRefineStage(nn.Module):
-    """Stage B：dual-encoder + common-guided residual refinement。"""
+    """Stage Bdual-encoder + common-guided residual refinement"""
 
     def __init__(
         self,
@@ -332,7 +327,7 @@ class DualBRefineStage(nn.Module):
         self.diff_encoder = SharedEncoder(1, enc_channels)
         self.deep_ch = enc_channels[-1]
 
-        # Stage B 只预测 residual deformation，所以 bottleneck 里只组织 refine 所需信息。
+        # Stage B  residual deformation bottleneck  refine
         self.decoder = GuidedDecoder(bottleneck_channels=self.deep_ch * 3)
         self.flow_head = nn.Conv3d(self.decoder.out_channels, 3, kernel_size=3, padding=1)
         self.pool = nn.AdaptiveAvgPool3d((1, 1, 1))
@@ -365,8 +360,8 @@ class DualBRefineStage(nn.Module):
         k = self.attn_k(pooled_diff).flatten(2).transpose(1, 2)
         v = self.attn_v(pooled_diff).flatten(2).transpose(1, 2)
         scale = float(self.attn_dim) ** -0.5
-        attn = torch.softmax(torch.bmm(q, k.transpose(1, 2)) * scale, dim=-1)  # 轻量 self-attention 权重
-        guided = torch.bmm(attn, v).transpose(1, 2)                              # 用 common 上下文引导 diff 特征
+        attn = torch.softmax(torch.bmm(q, k.transpose(1, 2)) * scale, dim=-1)  #  self-attention
+        guided = torch.bmm(attn, v).transpose(1, 2)                              #  common  diff
         guided = guided.reshape(
             pooled_diff.shape[0],
             self.attn_dim,
@@ -384,7 +379,7 @@ class DualBRefineStage(nn.Module):
         level_idx: int,
         use_attn_lite: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        # 返回 guided diff 特征和 control map，后者主要用于解释 B 到底在“放大/抑制”哪里。
+        #  guided diff  control map B /
         if self.fusion_mode == "concat":
             return diff_feat, torch.ones_like(torch.abs(diff_feat))
         if self.fusion_mode == "gate" or use_attn_lite:
@@ -399,9 +394,9 @@ class DualBRefineStage(nn.Module):
         return diff_feat, torch.ones_like(torch.abs(diff_feat))  # diff_only
 
     def compose_flows(self, coarse_flow: torch.Tensor, residual_flow: torch.Tensor) -> torch.Tensor:
-        """把 coarse flow 与 residual flow 组合成最终形变场。"""
+        """ coarse flow  residual flow """
 
-        warped_coarse_flow = self.warp(coarse_flow, residual_flow)  # 先把 coarse flow 映射到 residual 坐标系
+        warped_coarse_flow = self.warp(coarse_flow, residual_flow)  #  coarse flow  residual
         return residual_flow + warped_coarse_flow
 
     def forward(
@@ -411,7 +406,7 @@ class DualBRefineStage(nn.Module):
         fixed: torch.Tensor,
         coarse_flow: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        # A 已经完成一次全局对齐，因此 B 直接对 `coarse_warped` 和 `fixed` 做残差建模。
+        # A  B  `coarse_warped`  `fixed`
         common_feats_a = self.common_encoder(coarse_warped)
         common_feats_f = self.common_encoder(fixed)
         diff_feats_a = self.diff_encoder(coarse_warped)
@@ -422,9 +417,9 @@ class DualBRefineStage(nn.Module):
         diff_a = diff_feats_a[-1]
         diff_f = diff_feats_f[-1]
 
-        common_mean = 0.5 * (common_a + common_f)  # 两侧共有的稳定结构语义。
-        diff_res = diff_a - diff_f                 # 仍未对齐的残差信号。
-        diff_mag = torch.abs(diff_res)             # 只保留幅值，便于做差异强度正则。
+        common_mean = 0.5 * (common_a + common_f)  #
+        diff_res = diff_a - diff_f                 #
+        diff_mag = torch.abs(diff_res)             #
         common_skip_means = [0.5 * (a + f) for a, f in zip(common_feats_a, common_feats_f)]
         guided_diff_skips: list[torch.Tensor] = []
 
@@ -454,7 +449,7 @@ class DualBRefineStage(nn.Module):
                 )
                 guided_diff_skips.append(guided_skip)
 
-        # B 的解码器只接三部分输入：共性语义、受控差异、差异幅值。
+        # B
         bottleneck = torch.cat([common_mean, guided_diff, diff_mag], dim=1)
         dec = self.decoder(bottleneck, common_skip_means, guided_diff_skips, coarse_warped, fixed)
 
@@ -483,7 +478,7 @@ class DualBRefineStage(nn.Module):
 
 
 class RegDualBModel(nn.Module):
-    """v8 reg 主模型：Stage A coarse + dual-B refine。"""
+    """v8 reg Stage A coarse + dual-B refine"""
 
     def __init__(
         self,
@@ -511,20 +506,20 @@ class RegDualBModel(nn.Module):
         moving_label: torch.Tensor | None = None,
         detach_stage_a_for_b: bool = False,
     ) -> dict[str, torch.Tensor]:
-        # 主链设计很直接：A 做 coarse，B 做 residual refine。
+        # A  coarseB  residual refine
         coarse = self.coarse_stage(moving, fixed)
         coarse_warped_label = None
         if moving_label is not None:
             coarse_warped_label = self.warp_label(moving_label.float(), coarse["coarse_flow"])
         if self.enable_stage_b:
-            # 某些实验会切断 B -> A 的梯度，观察 refine 是否过度依赖 coarse 主干。
+            #  B -> A  refine  coarse
             coarse_warped_for_b = coarse["coarse_warped"].detach() if detach_stage_a_for_b else coarse["coarse_warped"]
             coarse_flow_for_b = coarse["coarse_flow"].detach() if detach_stage_a_for_b else coarse["coarse_flow"]
             stage_b_out = self.stage_b(moving, coarse_warped_for_b, fixed, coarse_flow_for_b)
         else:
             batch_size = moving.shape[0]
             pooled_shape = (batch_size, self.stage_b.deep_ch)
-            # 关闭 B 时仍返回完整键集合，这样 train / infer 主链不需要再写 if-else。
+            #  B  train / infer  if-else
             stage_b_out = {
                 "common_a_vec": moving.new_zeros(pooled_shape),
                 "common_f_vec": moving.new_zeros(pooled_shape),
@@ -545,7 +540,7 @@ class RegDualBModel(nn.Module):
 
 
 class ROIConditionBuilder910(nn.Module):
-    """910 专用 ROI 条件构造器。"""
+    """Build soft ROI, boundary, and fixed-image edge conditions."""
 
     def __init__(self, roi_classes: tuple[int, ...] = (), dilation_radius: int = 3, condition_channels: int = 3):
         super().__init__()
@@ -579,7 +574,7 @@ class ROIConditionBuilder910(nn.Module):
         return torch.clamp((edge - edge_mean) / edge_std, min=0.0, max=3.0) / 3.0
 
     def forward(self, coarse_warped_label: torch.Tensor, fixed: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """输出 910 的 ROI 条件图与 ROI 加权图。"""
+        """Return the ROI condition tensor and its spatial weighting map."""
 
         if self.condition_channels <= 0:
             empty = fixed.new_zeros(fixed.shape[0], 0, *fixed.shape[2:])
@@ -614,7 +609,7 @@ class ROIConditionBuilder910(nn.Module):
 
 
 class ROIRefineDecoder910(nn.Module):
-    """910 专用单流解码器：只接收单编码器 skip 与 ROI 条件。"""
+    """Decode ROI-conditioned refinement features with skip connections."""
 
     def __init__(
         self,
@@ -665,7 +660,7 @@ class ROIRefineDecoder910(nn.Module):
 
 
 class ROIBRefineStage910(nn.Module):
-    """910 专用 B：单编码器 ROI-conditioned residual refine。"""
+    """Predict a residual deformation for the ROI refinement stage."""
 
     def __init__(
         self,
@@ -691,7 +686,7 @@ class ROIBRefineStage910(nn.Module):
         nn.init.zeros_(self.flow_head.bias)
 
     def compose_flows(self, coarse_flow: torch.Tensor, residual_flow: torch.Tensor) -> torch.Tensor:
-        """把 coarse flow 与 residual flow 组合成最终形变场。"""
+        """Compose the coarse flow with the residual flow."""
 
         warped_coarse_flow = self.warp(coarse_flow, residual_flow)
         return residual_flow + warped_coarse_flow
@@ -733,7 +728,7 @@ class ROIBRefineStage910(nn.Module):
 
 
 class RegROIBv910Model(nn.Module):
-    """910 专用 reg 主模型：A coarse + 单编码器 ROI-B refine。"""
+    """Registration model with a coarse stage and ROI refinement."""
 
     def __init__(
         self,
@@ -833,7 +828,7 @@ def build_v0000_vm_model_bundle(
     int_steps: int = 7,
     flow_output_mode: str | None = None,
 ) -> nn.ModuleDict:
-    """v0000 builder：最基础的单阶段 VM。"""
+    """Build the legacy VM registration model bundle."""
 
     if flow_output_mode not in {None, "svf", "disp"}:
         raise ValueError(f"Unsupported flow_output_mode: {flow_output_mode}")
@@ -855,7 +850,7 @@ def build_v9_1_0_roib_model_bundle(
     roi_dilation_radius: int = 3,
     roi_condition_channels: int = 3,
 ) -> nn.ModuleDict:
-    """910 专用模型构建函数。"""
+    """Build the ROI-B registration model bundle."""
 
     reg_model = RegROIBv910Model(
         inshape=inshape,
@@ -870,10 +865,10 @@ def build_v9_1_0_roib_model_bundle(
 
 
 # ==============================
-# Reg v9.3.0 下采样 Stage-A + 原分辨率 ROI-B
+# Registration architecture
 # ==============================
 class DownsampledCoarseRegistrationStage930(nn.Module):
-    """930 的 Stage A：先在低分辨率估计 coarse flow，再映射回原分辨率。"""
+    """Predict a coarse flow at a reduced spatial resolution."""
 
     def __init__(
         self,
@@ -974,7 +969,7 @@ class DownsampledCoarseRegistrationStage930(nn.Module):
 
 
 class RegROIBv930Model(nn.Module):
-    """930 主模型：A 在低分辨率估 flow，B 在原分辨率 refine，并在原图空间合成 flow。"""
+    """Registration model with downsampled coarse prediction and refinement."""
 
     def __init__(
         self,
@@ -1065,7 +1060,7 @@ def build_downsampled_roib_reg_model_bundle(
     roi_condition_channels: int = 3,
     stage_a_downsample_factor: int = 8,
 ) -> nn.ModuleDict:
-    """930 专用模型构建函数。"""
+    """Build the downsampled ROI-B registration model bundle."""
 
     reg_model = RegROIBv930Model(
         inshape=inshape,
@@ -1081,10 +1076,10 @@ def build_downsampled_roib_reg_model_bundle(
 
 
 # ==============================
-# Reg v9.3.1 下采样 Stage-A(浅层) + 原分辨率 ROI-B
+# Registration architecture
 # ==============================
 class DownsampledShallowCoarseRegistrationStage931(nn.Module):
-    """931 的 Stage A：三层 encoder/decoder，兼容更激进的下采样比例。"""
+    """931  Stage A encoder/decoder"""
 
     def __init__(
         self,
@@ -1185,7 +1180,7 @@ class DownsampledShallowCoarseRegistrationStage931(nn.Module):
 
 
 class RegROIBv931Model(nn.Module):
-    """931 主模型：浅层低分辨率 A + 原分辨率 ROI-B。"""
+    """931  A +  ROI-B"""
 
     def __init__(
         self,
@@ -1276,7 +1271,7 @@ def build_v9_3_1_roib_downsampled_shallowa_model_bundle(
     roi_condition_channels: int = 3,
     stage_a_downsample_factor: int = 4,
 ) -> nn.ModuleDict:
-    """931 专用模型构建函数。"""
+    """931 """
 
     reg_model = RegROIBv931Model(
         inshape=inshape,
@@ -1292,10 +1287,10 @@ def build_v9_3_1_roib_downsampled_shallowa_model_bundle(
 
 
 # ==============================
-# Reg v9.3.2 下采样 Stage-A + 原版 Dual-B
+# Registration architecture
 # ==============================
 class RegDownsampledDualBv932Model(nn.Module):
-    """932 主模型：930 的低分辨率 A，接 900 的 Dual-B refine。"""
+    """Registration model with a downsampled coarse stage and dual refinement."""
 
     def __init__(
         self,
@@ -1363,7 +1358,7 @@ def build_v9_3_2_downsampled_dualb_model_bundle(
     enable_stage_b: bool = True,
     stage_a_downsample_factor: int = 4,
 ) -> nn.ModuleDict:
-    """932 专用模型构建函数。"""
+    """932 """
 
     reg_model = RegDownsampledDualBv932Model(
         inshape=inshape,
@@ -1376,10 +1371,10 @@ def build_v9_3_2_downsampled_dualb_model_bundle(
 
 
 # ==============================
-# Reg v9.1.1 / v9.1.2 显式 ROI-B
+# Registration architecture
 # ==============================
 class ExplicitROIBuilder911(nn.Module):
-    """显式 ROI 条件构造器：按类别生成 moving-side ROI。"""
+    """ ROI  moving-side ROI"""
 
     def __init__(
         self,
@@ -1446,7 +1441,7 @@ class ExplicitROIBuilder911(nn.Module):
 
 
 class ConditionedResidualFeatureStage(nn.Module):
-    """显式 ROI-B 的基础特征提取器：单 encoder + 条件解码。"""
+    """ ROI-B  encoder + """
 
     def __init__(
         self,
@@ -1485,7 +1480,7 @@ class ConditionedResidualFeatureStage(nn.Module):
 
 
 class ExplicitROIOnceStage911(nn.Module):
-    """911: 一次前向输出 global residual 与 class-wise residual。"""
+    """911:  global residual  class-wise residual"""
 
     def __init__(
         self,
@@ -1563,7 +1558,7 @@ class ExplicitROIOnceStage911(nn.Module):
 
 
 class ConditionedResidualPredictor(nn.Module):
-    """显式 ROI-B 的单个 residual predictor。"""
+    """ ROI-B  residual predictor"""
 
     def __init__(
         self,
@@ -1591,7 +1586,7 @@ class ConditionedResidualPredictor(nn.Module):
 
 
 class ROIPerClassStage912(nn.Module):
-    """912: 每类单独前向，再做 class-wise 融合。"""
+    """912:  class-wise """
 
     def __init__(
         self,
@@ -1662,7 +1657,7 @@ class ROIPerClassStage912(nn.Module):
 
 
 class RegExplicitROIV911Model(nn.Module):
-    """911 主模型：一次前向的显式 class-wise ROI-B。"""
+    """911  class-wise ROI-B"""
 
     def __init__(
         self,
@@ -1777,7 +1772,7 @@ class RegExplicitROIV911Model(nn.Module):
 
 
 class RegPerClassROIV912Model(nn.Module):
-    """912 主模型：按类别多次前向的显式 class-wise ROI-B。"""
+    """912  class-wise ROI-B"""
 
     def __init__(
         self,
@@ -1959,10 +1954,10 @@ def build_v9_1_2_perclass_roi_model_bundle(
 
 
 # ==============================
-# Reg v9.2.0 单器官 ROI-aware 实验模型
+# Registration architecture
 # ==============================
 class SingleOrganROIBuilder920(nn.Module):
-    """920 专用单器官 ROI 构造器：从 moving label 提取目标类 ROI。"""
+    """920  ROI  moving label  ROI"""
 
     def __init__(self, target_class: int = 1, dilation_radius: int = 5, condition_channels: int = 3):
         super().__init__()
@@ -2033,7 +2028,7 @@ class SingleOrganROIBuilder920(nn.Module):
 
 
 class ROIRegistrationDecoder920(nn.Module):
-    """920 专用解码器：在尾部只回注 ROI-only moving 与 fixed。"""
+    """920  ROI-only moving  fixed"""
 
     def __init__(
         self,
@@ -2080,7 +2075,7 @@ class ROIRegistrationDecoder920(nn.Module):
 
 
 class RegSingleOrganROI920Model(nn.Module):
-    """920 主模型：moving 侧只使用 ROI 图像的单阶段配准。"""
+    """920 moving  ROI """
 
     def __init__(
         self,
@@ -2123,7 +2118,7 @@ class RegSingleOrganROI920Model(nn.Module):
             raise ValueError("RegSingleOrganROI920Model requires moving_label")
 
         roi_pack = self.roi_builder(moving, moving_label, fixed)
-        # reg920 的实验前提是 moving 侧不再输入整图，只保留目标器官 ROI 图像。
+        # ROI-conditioned moving features
         encoder_input = torch.cat([roi_pack["roi_image"], fixed, roi_pack["condition"]], dim=1)
         feats = self.encoder(encoder_input)
         dec = self.decoder(
@@ -2170,10 +2165,10 @@ def build_v9_2_0_singleorgan_model_bundle(
 
 
 # ==============================
-# Seg v8 基线（UNet + MMD）
+# Seg v8 UNet + MMD
 # ==============================
 class SegConvBlock(nn.Module):
-    """分割基础卷积块：双 Conv3d + IN + LeakyReLU。"""
+    """ Conv3d + IN + LeakyReLU"""
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
@@ -2191,7 +2186,7 @@ class SegConvBlock(nn.Module):
 
 
 class DistillSegUNet(nn.Module):
-    """轻量 3D UNet，返回 logits 与多层特征。"""
+    """ 3D UNet logits """
 
     def __init__(
         self,
@@ -2226,8 +2221,8 @@ class DistillSegUNet(nn.Module):
         e1 = self.enc1(x)
         e2 = self.enc2(self.pool1(e1))
         e3 = self.enc3(self.pool2(e2))
-        b = self.dropout(self.bottleneck(self.pool3(e3)))     # bottleneck 负责汇聚全局语义
-        d3 = self.dec3(torch.cat([self.up3(b), e3], dim=1))   # 逐级拼接 skip，恢复空间细节
+        b = self.dropout(self.bottleneck(self.pool3(e3)))     # bottleneck
+        d3 = self.dec3(torch.cat([self.up3(b), e3], dim=1))   #  skip
         d2 = self.dropout(self.dec2(torch.cat([self.up2(d3), e2], dim=1)))
         d1 = self.dropout(self.dec1(torch.cat([self.up1(d2), e1], dim=1)))
         logits = self.head(d1)
@@ -2236,7 +2231,7 @@ class DistillSegUNet(nn.Module):
 
 
 class SingleSegUNetMMD(nn.Module):
-    """v8 seg：单网络 UNet（baseline）+ 中层特征 MMD。"""
+    """v8 seg UNetbaseline+  MMD"""
 
     def __init__(
         self,
@@ -2271,7 +2266,7 @@ class SingleSegUNetMMD(nn.Module):
         syn_logits, syn_features = self.unet(x_syn)
         out = {
             "syn_logits": syn_logits,
-            "syn_features": syn_features,  # 供 MMD 在指定层对齐 syn / real 中间分布
+            "syn_features": syn_features,  #  MMD  syn / real
         }
         if x_real is not None:
             real_logits, real_features = self.unet(x_real)
@@ -2281,7 +2276,7 @@ class SingleSegUNetMMD(nn.Module):
 
 
 class SingleSegUNetBasic(nn.Module):
-    """v0000：最基础的单网络 3D UNet。"""
+    """v0000 3D UNet"""
 
     def __init__(
         self,
@@ -2304,7 +2299,7 @@ class SingleSegUNetBasic(nn.Module):
 
 
 class DualSyntheticTeacherNet(nn.Module):
-    """v1110 教师网络：联合读取 reg/vae 两路 synthetic 输入，输出两份 soft logits。"""
+    """v1110  reg/vae  synthetic  soft logits"""
 
     def __init__(
         self,
@@ -2345,7 +2340,7 @@ class DualSyntheticTeacherNet(nn.Module):
 
 
 class FlowEncoder3D(nn.Module):
-    """3D flow VAE 编码器。"""
+    """3D flow VAE """
 
     def __init__(self, in_channels: int = 3, base_channels: int = 16):
         super().__init__()
@@ -2361,7 +2356,7 @@ class FlowEncoder3D(nn.Module):
 
 
 class FlowDecoder3D(nn.Module):
-    """3D flow VAE 解码器。"""
+    """3D flow VAE """
 
     def __init__(self, out_channels: int = 3, base_channels: int = 16):
         super().__init__()
@@ -2388,7 +2383,7 @@ class FlowDecoder3D(nn.Module):
 
 
 class FlowVAE1110(nn.Module):
-    """v1110：最小可行的 3D deformation flow VAE。"""
+    """v1110 3D deformation flow VAE"""
 
     def __init__(self, in_channels: int = 3, base_channels: int = 16, latent_dim: int = 128):
         super().__init__()

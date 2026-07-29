@@ -1,14 +1,7 @@
-"""
-损失函数模块（losses.py）
+"""Loss functions used by the OPAL-Net registration and segmentation models.
 
-设计目标：
-1) 提供配准与分割场景常用损失（NCC/LNCC、平滑、Jacobian、KL、Dice）；
-2) 提供模块化封装（nn.Module）与函数式实现，便于在不同训练脚本复用；
-3) 在概率配准与循环一致性场景中，提供可组合的辅助项。
-
-说明：
-- 本文件不涉及数据读取与文件写入；重点是数值计算与训练信号构建。
-- 输入张量默认采用 3D 医学图像格式 [B, C, D, H, W]。
+The module contains similarity, deformation regularization, Dice, feature
+alignment, and auxiliary losses for 3D tensors shaped [B, C, D, H, W].
 """
 
 from __future__ import annotations
@@ -21,28 +14,28 @@ from utils import warp_3d
 
 
 # ==============================
-# 配准主损失与正则
+#
 # ==============================
 class VxmDiffReconLoss(nn.Module):
     """
-    基于 MSE 的重建/相似度损失。
+     MSE /
 
-    目的：
-    - 约束形变后 moving 图像与 fixed 图像在体素级别的差异；
-    - 作为概率模型中的“重建项”，与 KL 项共同优化。
 
-    输入：
-    - fixed_img: 固定图像，形状 [B, C, D, H, W]
-    - warped_moving_img: 形变后的移动图像，形状需与 fixed_img 一致
+    -  moving  fixed
+    -  KL
 
-    输出：
-    - 标量损失（越小越好）。
+
+    - fixed_img:  [B, C, D, H, W]
+    - warped_moving_img:  fixed_img
+
+
+    -
     """
 
     def __init__(self, sigma_sq: float = 1.0, sample_count: int = 1):
         super().__init__()
-        self.sigma_sq = sigma_sq          # 似然方差超参数（高斯噪声假设）
-        self.sample_count = sample_count  # 蒙特卡洛样本数（用于缩放重建项）
+        self.sigma_sq = sigma_sq          #
+        self.sample_count = sample_count  #
 
     def forward(self, fixed_img: torch.Tensor, warped_moving_img: torch.Tensor) -> torch.Tensor:
         if fixed_img.shape != warped_moving_img.shape:
@@ -52,27 +45,27 @@ class VxmDiffReconLoss(nn.Module):
         if self.sample_count <= 0:
             raise ValueError("sample_count must be positive")
 
-        mse = (fixed_img - warped_moving_img).pow(2).mean()                 # 体素级均方误差
-        return mse / (2.0 * self.sigma_sq * float(self.sample_count))       # 高斯负对数似然的比例形式
+        mse = (fixed_img - warped_moving_img).pow(2).mean()                 #
+        return mse / (2.0 * self.sigma_sq * float(self.sample_count))       #
 
 
 class VxmDiffKLLoss(nn.Module):
     """
-    概率配准中的 KL 散度损失。
+     KL
 
-    目的：
-    - 约束模型预测分布接近先验分布，避免隐空间发散；
-    - 保留采样多样性，支持不确定性建模。
 
-    输入：
-    - v_mean: 隐变量均值
-    - v_log_sigma: 隐变量对数标准差（注意不是 logvar）
+    -
+    -
+
+
+    - v_mean:
+    - v_log_sigma:  logvar
     """
 
     def __init__(self, prior_lambda: float = 1.0, eps: float = 1e-8):
         super().__init__()
-        self.prior_lambda = prior_lambda  # 先验权重系数
-        self.eps = eps                    # 防止 log(0)
+        self.prior_lambda = prior_lambda  #
+        self.eps = eps                    #  log(0)
 
     def forward(self, v_mean: torch.Tensor, v_log_sigma: torch.Tensor) -> torch.Tensor:
         if v_mean.shape != v_log_sigma.shape:
@@ -80,38 +73,38 @@ class VxmDiffKLLoss(nn.Module):
         if self.prior_lambda <= 0:
             raise ValueError("prior_lambda must be positive")
 
-        var = torch.exp(2.0 * v_log_sigma)                                        # 由 log_sigma 恢复方差
-        log_var = torch.log(var + self.eps)                                       # 数值稳定的 log(var)
-        kl = 0.5 * (self.prior_lambda * (v_mean.pow(2) + var) - log_var - 1.0)   # KL(q||p) 逐元素表达式
-        return kl.mean()                                                           # 标量化
+        var = torch.exp(2.0 * v_log_sigma)                                        #  log_sigma
+        log_var = torch.log(var + self.eps)                                       #  log(var)
+        kl = 0.5 * (self.prior_lambda * (v_mean.pow(2) + var) - log_var - 1.0)   # KL(q||p)
+        return kl.mean()                                                           #
 
 
 class NCC(nn.Module):
     """
-    LNCC 的模块封装（接口风格与其他 loss 统一）。
+    LNCC  loss
 
-    关键逻辑：
-    - 在 CUDA 情况下禁用 autocast，统一使用 float 计算 LNCC，避免低精度导致分母数值不稳定。
+
+    -  CUDA  autocast float  LNCC
     """
 
     def __init__(self, win: int = 9):
         super().__init__()
-        self.win = win  # 局部窗口边长
+        self.win = win  #
 
     def forward(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> torch.Tensor:
         if y_true.is_cuda:
             with torch.amp.autocast("cuda", enabled=False):
-                return lncc_loss(y_true.float(), y_pred.float(), win=self.win)  # GPU 下强制 FP32
-        return lncc_loss(y_true.float(), y_pred.float(), win=self.win)           # CPU 路径
+                return lncc_loss(y_true.float(), y_pred.float(), win=self.win)  # GPU  FP32
+        return lncc_loss(y_true.float(), y_pred.float(), win=self.win)           # CPU
 
 
 class ROIWeightedLNCC(nn.Module):
     """
-    ROI 加权 LNCC。
+    ROI  LNCC
 
-    目的：
-    - 让 refinement 在 selected ROI / boundary 附近获得更高训练权重；
-    - 不裁剪图像，也不限制 flow，只改变图像相似性损失的空间关注度。
+
+    -  refinement  selected ROI / boundary
+    -  flow
     """
 
     def __init__(self, win: int = 9, eps: float = 1e-6):
@@ -142,10 +135,10 @@ class ROIWeightedLNCC(nn.Module):
 
 class FlowGradLoss(nn.Module):
     """
-    形变场全局平滑损失（扩散正则）。
 
-    目的：
-    - 限制 flow/SVF 在空间上剧烈震荡，提升形变场可解释性与可逆性。
+
+
+    -  flow/SVF
     """
 
     def __init__(self):
@@ -154,44 +147,44 @@ class FlowGradLoss(nn.Module):
     def forward(self, flow: torch.Tensor) -> torch.Tensor:
         if flow.ndim != 5 or flow.shape[1] != 3:
             raise ValueError("flow must be [B, 3, D, H, W]")
-        dz = flow[:, :, 1:, :, :] - flow[:, :, :-1, :, :]   # z 方向一阶差分
-        dy = flow[:, :, :, 1:, :] - flow[:, :, :, :-1, :]   # y 方向一阶差分
-        dx = flow[:, :, :, :, 1:] - flow[:, :, :, :, :-1]   # x 方向一阶差分
+        dz = flow[:, :, 1:, :, :] - flow[:, :, :-1, :, :]   # z
+        dy = flow[:, :, :, 1:, :] - flow[:, :, :, :-1, :]   # y
+        dx = flow[:, :, :, :, 1:] - flow[:, :, :, :, :-1]   # x
         return (dz.square().mean() + dy.square().mean() + dx.square().mean()) / 3.0
 
 
 class JacobianDeterminantLoss(nn.Module):
     """
-    Jacobian 行列式惩罚。
+    Jacobian
 
-    目的：
-    - 对 det(J) < eps 的位置施加惩罚，抑制折叠/翻转（局部拓扑破坏）。
 
-    注意：
-    - 该实现将 flow 看作位移场 u，真实 Jacobian 为 I + ∇u。
-    - 使用前向差分，边界采用裁剪后的公共体素区域。
+    -  det(J) < eps /
+
+
+    -  flow  u Jacobian  I + u
+    -
     """
 
     def __init__(self, eps: float = 1e-6):
         super().__init__()
-        self.eps = eps  # 判定“不可接受 Jacobian”的阈值
+        self.eps = eps  #  Jacobian
 
     def forward(self, flow: torch.Tensor) -> torch.Tensor:
         if flow.ndim != 5 or flow.shape[1] != 3:
             raise ValueError("flow must be [B, 3, D, H, W]")
 
         u = flow
-        duz_dz = u[:, 0, 1:, :-1, :-1] - u[:, 0, :-1, :-1, :-1]  # ∂u_z/∂z
-        duz_dy = u[:, 0, :-1, 1:, :-1] - u[:, 0, :-1, :-1, :-1]  # ∂u_z/∂y
-        duz_dx = u[:, 0, :-1, :-1, 1:] - u[:, 0, :-1, :-1, :-1]  # ∂u_z/∂x
+        duz_dz = u[:, 0, 1:, :-1, :-1] - u[:, 0, :-1, :-1, :-1]  # u_z/z
+        duz_dy = u[:, 0, :-1, 1:, :-1] - u[:, 0, :-1, :-1, :-1]  # u_z/y
+        duz_dx = u[:, 0, :-1, :-1, 1:] - u[:, 0, :-1, :-1, :-1]  # u_z/x
 
-        duy_dz = u[:, 1, 1:, :-1, :-1] - u[:, 1, :-1, :-1, :-1]  # ∂u_y/∂z
-        duy_dy = u[:, 1, :-1, 1:, :-1] - u[:, 1, :-1, :-1, :-1]  # ∂u_y/∂y
-        duy_dx = u[:, 1, :-1, :-1, 1:] - u[:, 1, :-1, :-1, :-1]  # ∂u_y/∂x
+        duy_dz = u[:, 1, 1:, :-1, :-1] - u[:, 1, :-1, :-1, :-1]  # u_y/z
+        duy_dy = u[:, 1, :-1, 1:, :-1] - u[:, 1, :-1, :-1, :-1]  # u_y/y
+        duy_dx = u[:, 1, :-1, :-1, 1:] - u[:, 1, :-1, :-1, :-1]  # u_y/x
 
-        dux_dz = u[:, 2, 1:, :-1, :-1] - u[:, 2, :-1, :-1, :-1]  # ∂u_x/∂z
-        dux_dy = u[:, 2, :-1, 1:, :-1] - u[:, 2, :-1, :-1, :-1]  # ∂u_x/∂y
-        dux_dx = u[:, 2, :-1, :-1, 1:] - u[:, 2, :-1, :-1, :-1]  # ∂u_x/∂x
+        dux_dz = u[:, 2, 1:, :-1, :-1] - u[:, 2, :-1, :-1, :-1]  # u_x/z
+        dux_dy = u[:, 2, :-1, 1:, :-1] - u[:, 2, :-1, :-1, :-1]  # u_x/y
+        dux_dx = u[:, 2, :-1, :-1, 1:] - u[:, 2, :-1, :-1, :-1]  # u_x/x
 
         j11 = 1.0 + duz_dz
         j12 = duz_dy
@@ -207,21 +200,21 @@ class JacobianDeterminantLoss(nn.Module):
             j11 * (j22 * j33 - j23 * j32)
             - j12 * (j21 * j33 - j23 * j31)
             + j13 * (j21 * j32 - j22 * j31)
-        )  # 3x3 行列式展开
-        return torch.relu(self.eps - det).mean()  # 仅惩罚 det < eps 的区域
+        )  # 3x3
+        return torch.relu(self.eps - det).mean()  #  det < eps
 
 
 class MaskedFlowGradLoss(nn.Module):
     """
-    掩码平滑损失（空间加权版平滑正则）。
 
-    目的：
-    - 在不同空间位置施加不同平滑约束强度；
-    - 常用于“不确定/病理区域放松约束，健康区域保持平滑”的场景。
 
-    输入：
+
+    -
+    - /
+
+
     - flow: [B, 3, D, H, W]
-    - weight: [B, 1, D, H, W]，通常取值 [0,1]
+    - weight: [B, 1, D, H, W] [0,1]
     """
 
     def __init__(self):
@@ -233,16 +226,16 @@ class MaskedFlowGradLoss(nn.Module):
         if weight.ndim != 5 or weight.shape[1] != 1:
             raise ValueError("weight must be [B, 1, D, H, W]")
 
-        dz = flow[:, :, 1:, :, :] - flow[:, :, :-1, :, :]  # z 梯度
-        dy = flow[:, :, :, 1:, :] - flow[:, :, :, :-1, :]  # y 梯度
-        dx = flow[:, :, :, :, 1:] - flow[:, :, :, :, :-1]  # x 梯度
+        dz = flow[:, :, 1:, :, :] - flow[:, :, :-1, :, :]  # z
+        dy = flow[:, :, :, 1:, :] - flow[:, :, :, :-1, :]  # y
+        dx = flow[:, :, :, :, 1:] - flow[:, :, :, :, :-1]  # x
 
-        # 权重需要与差分张量在空间维度对齐
+        #
         wz = weight[:, :, 1:, :, :]
         wy = weight[:, :, :, 1:, :]
         wx = weight[:, :, :, :, 1:]
 
-        # 分母中乘 flow.shape[1] 是为了与通道维度归一化一致
+        #  flow.shape[1]
         dz_loss = (dz.square() * wz).sum() / (wz.sum() * flow.shape[1] + 1e-6)
         dy_loss = (dy.square() * wy).sum() / (wy.sum() * flow.shape[1] + 1e-6)
         dx_loss = (dx.square() * wx).sum() / (wx.sum() * flow.shape[1] + 1e-6)
@@ -251,22 +244,22 @@ class MaskedFlowGradLoss(nn.Module):
 
 class KLDivergenceLoss(nn.Module):
     """
-    KL 函数式实现的模块包装器。
+    KL
 
-    目的：
-    - 统一工程调用习惯（与其他 nn.Module loss 一致）；
-    - 实际计算由 kl_divergence_loss 执行。
+
+    -  nn.Module loss
+    -  kl_divergence_loss
     """
 
     def __init__(self):
         super().__init__()
 
     def forward(self, mu: torch.Tensor | None, logvar: torch.Tensor | None) -> torch.Tensor:
-        return kl_divergence_loss(mu, logvar)  # 直接转发，避免重复实现
+        return kl_divergence_loss(mu, logvar)  #
 
 
 class MeanAbsLoss(nn.Module):
-    """返回输入张量绝对值均值。"""
+    """"""
 
     def __init__(self):
         super().__init__()
@@ -276,7 +269,7 @@ class MeanAbsLoss(nn.Module):
 
 
 class GradientConsistencyLoss(nn.Module):
-    """比较两幅 3D 图像的一阶梯度一致性。"""
+    """ 3D """
 
     def __init__(self):
         super().__init__()
@@ -296,7 +289,7 @@ class GradientConsistencyLoss(nn.Module):
 
 
 class FeatureSeparationLoss(nn.Module):
-    """约束 common/diff 向量低相关（近似正交）。"""
+    """ common/diff """
 
     def __init__(self):
         super().__init__()
@@ -308,7 +301,7 @@ class FeatureSeparationLoss(nn.Module):
 
 
 class CommonConsistencyLoss(nn.Module):
-    """约束 common 向量在 moving/fixed 间保持一致。"""
+    """ common  moving/fixed """
 
     def __init__(self):
         super().__init__()
@@ -318,7 +311,7 @@ class CommonConsistencyLoss(nn.Module):
 
 
 class CosineCommonConsistencyLoss(nn.Module):
-    """基于余弦相似度约束 common 向量方向一致。"""
+    """ common """
 
     def __init__(self, eps: float = 1e-6):
         super().__init__()
@@ -330,7 +323,7 @@ class CosineCommonConsistencyLoss(nn.Module):
 
 
 class CosineCommonDiffLoss(nn.Module):
-    """统一约束 common 对齐与 common/diff 解耦。"""
+    """ common  common/diff """
 
     def __init__(
         self,
@@ -371,7 +364,7 @@ class CosineCommonDiffLoss(nn.Module):
 
 
 class DiffRegularizationLoss(nn.Module):
-    """约束 diff_gap 既非零塌缩，又具有空间分布。"""
+    """ diff_gap """
 
     def __init__(self, tau: float = 0.01, act_weight: float = 1.0, var_weight: float = 0.1):
         super().__init__()
@@ -388,9 +381,9 @@ class DiffRegularizationLoss(nn.Module):
 
 
 class MMDLoss(nn.Module):
-    """计算两组特征的 Maximum Mean Discrepancy (MMD) 以衡量分布差异。
+    """ Maximum Mean Discrepancy (MMD)
 
-    使用多核高斯 (Multi-kernel Gaussian) 提升对不同尺度分布差异的捕捉能力。
+     (Multi-kernel Gaussian)
     """
 
     def __init__(
@@ -403,7 +396,7 @@ class MMDLoss(nn.Module):
         self.pooled_size = pooled_size
 
     def _reshape_samples(self, feat: torch.Tensor) -> torch.Tensor:
-        """把不同维度特征统一压平成 `[N, C]` 样本表征，便于后续做核距离。"""
+        """ `[N, C]` """
 
         if feat.ndim == 5:
             feat = F.adaptive_avg_pool3d(feat, self.pooled_size)
@@ -482,7 +475,7 @@ class MMDLoss(nn.Module):
             k_yy = torch.exp(-alpha * yy)
             k_xy = torch.exp(-alpha * xy)
 
-            # 使用概率权重的有偏估计，兼容单样本 batch 和空间置信度加权。
+            #  batch
             mmd += (
                 (source_prob[:, None] * source_prob[None, :] * k_xx).sum()
                 + (target_prob[:, None] * target_prob[None, :] * k_yy).sum()
@@ -493,7 +486,7 @@ class MMDLoss(nn.Module):
 
 
 class UncertaintyRegressionLoss(nn.Module):
-    """用配准误差代理监督 uncertainty_map。"""
+    """ uncertainty_map"""
 
     def __init__(self, eps: float = 1e-6):
         super().__init__()
@@ -515,20 +508,20 @@ class UncertaintyRegressionLoss(nn.Module):
 
 
 class WeightedCrossEntropyLoss(nn.Module):
-    """支持可选空间权重图的交叉熵损失。
+    """
 
-    目的：
-    - 统一 segmentation 任务中的 CE 口径；
-    - 同时兼容普通监督与 uncertainty-weighted 伪监督；
-    - 保持接口风格与其他 `nn.Module` 类一致，便于放入 `criterions` 字典统一管理。
 
-    输入：
-    - logits: 分割网络输出，形状 `[B, C, D, H, W]`
-    - target: 标签，形状可为 `[B, D, H, W]` 或 `[B, 1, D, H, W]`
-    - weight_map: 可选空间权重图，形状 `[B, 1, D, H, W]`
+    -  segmentation  CE
+    -  uncertainty-weighted
+    -  `nn.Module`  `criterions`
 
-    输出：
-    - 标量损失
+
+    - logits:  `[B, C, D, H, W]`
+    - target:  `[B, D, H, W]`  `[B, 1, D, H, W]`
+    - weight_map:  `[B, 1, D, H, W]`
+
+
+    -
     """
 
     def __init__(self):
@@ -540,24 +533,24 @@ class WeightedCrossEntropyLoss(nn.Module):
         target: torch.Tensor,
         weight_map: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # `F.cross_entropy` 需要类别索引，因此先统一 target 的格式。
+        # `F.cross_entropy`  target
         if target.ndim == 5 and target.shape[1] == 1:
             target = target[:, 0].long()
         else:
             target = target.long()
 
-        # 先得到逐体素 CE，后续再决定是否做空间加权。
+        #  CE
         ce_map = F.cross_entropy(logits, target, reduction="none")
         if weight_map is None:
             return ce_map.mean()
 
-        # weight_map 为单通道体素权重图，与 `[B, D, H, W]` 的 ce_map 对齐后逐点加权。
+        # weight_map  `[B, D, H, W]`  ce_map
         weight = weight_map[:, 0].float().clamp(0.0, 1.0)
         return (ce_map * weight).sum() / (weight.sum() + 1e-6)
 
 
 class DiceLoss(nn.Module):
-    """`dice_loss()` 的模块封装器。"""
+    """`dice_loss()` """
 
     def __init__(self, eps: float = 1e-6):
         super().__init__()
@@ -568,7 +561,7 @@ class DiceLoss(nn.Module):
 
 
 class ContrastiveFeatureLoss(nn.Module):
-    """NT-Xent 风格对比损失，用于 CLMorph 类特征约束。"""
+    """NT-Xent  CLMorph """
 
     def __init__(self, temperature: float = 0.5, eps: float = 1e-6):
         super().__init__()
@@ -588,11 +581,11 @@ class ContrastiveFeatureLoss(nn.Module):
         z_a = F.normalize(feat_a, dim=1, eps=self.eps)
         z_b = F.normalize(feat_b, dim=1, eps=self.eps)
         reps = torch.cat([z_a, z_b], dim=0)
-        sim = F.cosine_similarity(reps.unsqueeze(1), reps.unsqueeze(0), dim=2)  # 构造 2B x 2B 相似度矩阵
+        sim = F.cosine_similarity(reps.unsqueeze(1), reps.unsqueeze(0), dim=2)  #  2B x 2B
 
         pos_ab = torch.diag(sim, batch_size)
         pos_ba = torch.diag(sim, -batch_size)
-        positives = torch.cat([pos_ab, pos_ba], dim=0)  # 对角偏移位置正好是正样本对
+        positives = torch.cat([pos_ab, pos_ba], dim=0)  #
 
         logits = torch.exp(sim / self.temperature)
         negatives_mask = ~torch.eye(batch_size * 2, dtype=torch.bool, device=feat_a.device)
@@ -602,19 +595,19 @@ class ContrastiveFeatureLoss(nn.Module):
 
 class SymmetricMultiscaleLNCCLoss(nn.Module):
     """
-    对称多尺度 LNCC 损失。
+     LNCC
 
-    核心思想（分步骤）：
-    1) 在多个尺度上评估配准质量；
-    2) 对每个尺度使用 half-flow 将 moving/fixed 双向拉近（对称）；
-    3) 逐尺度求 LNCC 并累加，提升对大形变与细节的一致约束。
+
+    1)
+    2)  half-flow  moving/fixed
+    3)  LNCC
     """
 
     def __init__(self, win: int = 9, eps: float = 1e-15, scales: list[int] = None):
         super().__init__()
         self.win = win
         self.eps = eps
-        self.scales = scales if scales is not None else [1, 2, 4]  # 默认三尺度
+        self.scales = scales if scales is not None else [1, 2, 4]  #
 
     def forward(
         self,
@@ -622,8 +615,8 @@ class SymmetricMultiscaleLNCCLoss(nn.Module):
         moving_img: torch.Tensor,
         flow_list: list[torch.Tensor],
     ) -> torch.Tensor:
-        total = fixed_img.new_zeros(())        # 使用输入设备/精度创建标量累加器
-        base_size = fixed_img.shape[2:]        # 原始体素空间尺寸
+        total = fixed_img.new_zeros(())        # /
+        base_size = fixed_img.shape[2:]        #
         for i, flow in enumerate(flow_list[: len(self.scales)]):
             s = self.scales[i]
             if s == 1:
@@ -631,81 +624,81 @@ class SymmetricMultiscaleLNCCLoss(nn.Module):
                 m_s = moving_img
                 flow_s = flow
             else:
-                size_s = tuple(max(1, d // s) for d in base_size)                    # 尺度下采样尺寸
+                size_s = tuple(max(1, d // s) for d in base_size)                    #
                 f_s = F.interpolate(fixed_img, size=size_s, mode="trilinear", align_corners=True)
                 m_s = F.interpolate(moving_img, size=size_s, mode="trilinear", align_corners=True)
                 flow_s = F.interpolate(flow, size=size_s, mode="trilinear", align_corners=True)
                 ratio = [size_s[0] / base_size[0], size_s[1] / base_size[1], size_s[2] / base_size[2]]
-                flow_s[:, 0] *= ratio[0]                                                # 位移幅值按缩放比重标定
+                flow_s[:, 0] *= ratio[0]                                                #
                 flow_s[:, 1] *= ratio[1]
                 flow_s[:, 2] *= ratio[2]
 
-            half_flow = 0.5 * flow_s                                                    # half-way 变换
-            m_half = warp_3d(m_s, half_flow, mode="bilinear")                          # moving 前向半步
-            f_half = warp_3d(f_s, -half_flow, mode="bilinear")                         # fixed 反向半步
-            total = total + lncc_loss(f_half, m_half, win=self.win, eps=self.eps)     # 累加该尺度损失
+            half_flow = 0.5 * flow_s                                                    # half-way
+            m_half = warp_3d(m_s, half_flow, mode="bilinear")                          # moving
+            f_half = warp_3d(f_s, -half_flow, mode="bilinear")                         # fixed
+            total = total + lncc_loss(f_half, m_half, win=self.win, eps=self.eps)     #
         return total
 
 # ==============================
-# 函数式实现
-# 方便在脚本里直接组合，不强制走 nn.Module 接口。
+#
+#  nn.Module
 # ==============================
 
 
 def dice_loss(logits: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     """
-    Soft Dice 损失。
+    Soft Dice
 
-    目的：
-    - 在类别不平衡时比 CE 更稳定，直接优化区域重叠。
 
-    输入兼容：
-    - target 可为索引标签 [B,D,H,W] / [B,1,D,H,W]；
-    - 也可为 one-hot 概率图 [B,C,D,H,W]。
+    -  CE
+
+
+    - target  [B,D,H,W] / [B,1,D,H,W]
+    -  one-hot  [B,C,D,H,W]
     """
 
-    probs = torch.softmax(logits, dim=1)  # 将 logits 转换为类别概率
+    probs = torch.softmax(logits, dim=1)  #  logits
     if target.ndim == logits.ndim - 1:
         target_oh = torch.nn.functional.one_hot(target.long(), num_classes=logits.shape[1]).permute(0, 4, 1, 2, 3).float()
     elif target.ndim == logits.ndim and target.shape[1] == 1:
         target_oh = torch.nn.functional.one_hot(target[:, 0].long(), num_classes=logits.shape[1]).permute(0, 4, 1, 2, 3).float()
     else:
         target_oh = target.float()
-    inter = (probs * target_oh).sum(dim=(2, 3, 4))                  # 交集
-    denom = probs.sum(dim=(2, 3, 4)) + target_oh.sum(dim=(2, 3, 4)) # 并集替代表达
+    inter = (probs * target_oh).sum(dim=(2, 3, 4))                  #
+    denom = probs.sum(dim=(2, 3, 4)) + target_oh.sum(dim=(2, 3, 4)) #
     dice = (2.0 * inter + eps) / (denom + eps)
-    return 1.0 - dice.mean()                                         # 转为“越小越好”的损失
+    return 1.0 - dice.mean()                                         #
 
 
 def ncc_loss(x: torch.Tensor, y: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     """
-    全局 NCC 损失（1 - Pearson 相关系数）。
+     NCC 1 - Pearson
 
-    适用：
-    - 偏向对齐全局统计趋势，计算便宜；
-    - 精细配准一般建议优先使用 LNCC。
+
+    -
+    -  LNCC
     """
 
     x_mean = x.mean(dim=(2, 3, 4), keepdim=True)
     y_mean = y.mean(dim=(2, 3, 4), keepdim=True)
     x_center = x - x_mean
     y_center = y - y_mean
-    numerator = (x_center * y_center).mean(dim=(2, 3, 4))  # 协方差项
+    numerator = (x_center * y_center).mean(dim=(2, 3, 4))  #
     denominator = torch.sqrt(
         (x_center.square().mean(dim=(2, 3, 4)) + eps)
         * (y_center.square().mean(dim=(2, 3, 4)) + eps)
-    )  # 方差归一化项
+    )  #
     return (1.0 - numerator / denominator).mean()
 
 
 def lncc_loss(x: torch.Tensor, y: torch.Tensor, win: int = 9, eps: float = 1e-5) -> torch.Tensor:
     """
-    局部 NCC（LNCC）损失。
+     NCCLNCC
 
-    关键算法：
-    1) 利用分组 3D 卷积在滑窗内做求和（代替逐窗循环）；
-    2) 根据二阶矩公式计算局部协方差与方差；
-    3) 得到局部相关系数后取均值并转为损失。
+
+    1)  3D
+    2)
+    3)
     """
 
     if x.shape != y.shape:
@@ -714,11 +707,11 @@ def lncc_loss(x: torch.Tensor, y: torch.Tensor, win: int = 9, eps: float = 1e-5)
         raise ValueError("lncc_loss currently supports 3D tensors [B, C, D, H, W]")
 
     channel = x.shape[1]
-    filt = torch.ones(channel, 1, win, win, win, device=x.device, dtype=x.dtype)  # 每通道独立窗口核
+    filt = torch.ones(channel, 1, win, win, win, device=x.device, dtype=x.dtype)  #
     pad = win // 2
 
     def _sum_pool(t: torch.Tensor) -> torch.Tensor:
-        return F.conv3d(t, filt, padding=pad, groups=channel)  # groups=channel 实现逐通道卷积
+        return F.conv3d(t, filt, padding=pad, groups=channel)  # groups=channel
 
     x2 = x * x
     y2 = y * y
@@ -737,32 +730,32 @@ def lncc_loss(x: torch.Tensor, y: torch.Tensor, win: int = 9, eps: float = 1e-5)
     cross = xy_sum - y_mean * x_sum - x_mean * y_sum + x_mean * y_mean * win_size
     x_var = x2_sum - 2 * x_mean * x_sum + x_mean * x_mean * win_size
     y_var = y2_sum - 2 * y_mean * y_sum + y_mean * y_mean * win_size
-    x_var = torch.clamp(x_var, min=eps)                              # 防止分母接近 0
+    x_var = torch.clamp(x_var, min=eps)                              #  0
     y_var = torch.clamp(y_var, min=eps)
-    ncc = (cross * cross) / (x_var * y_var + eps)                    # 相关系数平方形式
-    ncc = torch.nan_to_num(ncc, nan=0.0, posinf=0.0, neginf=0.0)     # 屏蔽异常数值
+    ncc = (cross * cross) / (x_var * y_var + eps)                    #
+    ncc = torch.nan_to_num(ncc, nan=0.0, posinf=0.0, neginf=0.0)     #
     return 1.0 - ncc.mean()
 
 
 def kl_divergence_loss(mu: torch.Tensor | None, logvar: torch.Tensor | None) -> torch.Tensor:
     """
-    标准 VAE KL 损失函数。
+     VAE KL
 
-    技术约束：
-    - 允许 mu/logvar 为空（例如某些路径不启用 VAE），返回零损失以保持训练流程可复用。
+
+    -  mu/logvar  VAE
     """
 
     if mu is None or logvar is None:
         ref = mu if mu is not None else logvar
         if ref is None:
-            return torch.tensor(0.0)                              # 完全无参考时返回 CPU 标量
-        return torch.zeros((), device=ref.device, dtype=ref.dtype) # 保持设备/精度一致
+            return torch.tensor(0.0)                              #  CPU
+        return torch.zeros((), device=ref.device, dtype=ref.dtype) # /
     return (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp())).mean()
 
 
 def smoothness_loss(svf: torch.Tensor) -> torch.Tensor:
     """
-    函数式平滑损失（与 FlowGradLoss 等价）。
+     FlowGradLoss
     """
 
     if svf.ndim != 5 or svf.shape[1] != 3:
@@ -781,11 +774,11 @@ def soft_dice_cycle_loss(
     eps: float = 1e-6,
 ) -> torch.Tensor:
     """
-    软 Dice 循环一致性损失。
+     Dice
 
-    业务逻辑：
-    - 将 atlas_label 先经前向形变 phi_fwd，再经反向形变 phi_bak；
-    - 要求重建标签接近原始标签，以约束前后向映射互逆一致性。
+
+    -  atlas_label  phi_fwd phi_bak
+    -
     """
 
     if atlas_label.ndim == 5 and atlas_label.shape[1] == 1:
@@ -796,8 +789,8 @@ def soft_dice_cycle_loss(
         raise ValueError("atlas_label must be [B,1,D,H,W] or [B,D,H,W]")
 
     label_oh = F.one_hot(label_index, num_classes=num_classes).permute(0, 4, 1, 2, 3).float()
-    y_fwd = warp_3d(label_oh, phi_fwd, mode="bilinear")   # 正向形变
-    y_recon = warp_3d(y_fwd, phi_bak, mode="bilinear")    # 反向重建
+    y_fwd = warp_3d(label_oh, phi_fwd, mode="bilinear")   #
+    y_recon = warp_3d(y_fwd, phi_bak, mode="bilinear")    #
 
     inter = (label_oh * y_recon).sum(dim=(2, 3, 4))
     denom = label_oh.sum(dim=(2, 3, 4)) + y_recon.sum(dim=(2, 3, 4))
@@ -814,32 +807,32 @@ def reg_unet_vae_terms(
     lncc_win: int = 9,
 ) -> dict[str, torch.Tensor]:
     """
-    汇总 Reg-UNet-VAE 训练所需损失项。
+     Reg-UNet-VAE
 
-    输出字典：
-    - loss_sim: 图像相似度
+
+    - loss_sim:
     - loss_kl: VAE KL
-    - loss_smooth: SVF 平滑
-    - loss_cycle: 标签循环一致性
+    - loss_smooth: SVF
+    - loss_cycle:
     """
 
-    x_syn = producer_out["x_syn"]                 # 合成图像
-    phi_fwd = producer_out["phi_fwd"]             # 前向形变
-    phi_bak = producer_out["phi_bak"]             # 反向形变
-    svf = producer_out["svf"]                     # 速度场
-    mu = producer_out.get("mu", None)             # 变分均值（可选）
-    logvar = producer_out.get("logvar", None)     # 变分对数方差（可选）
+    x_syn = producer_out["x_syn"]                 #
+    phi_fwd = producer_out["phi_fwd"]             #
+    phi_bak = producer_out["phi_bak"]             #
+    svf = producer_out["svf"]                     #
+    mu = producer_out.get("mu", None)             #
+    logvar = producer_out.get("logvar", None)     #
 
-    target_img = real_img if real_img is not None else atlas_img   # 无真实图时退化为 atlas 自重建
+    target_img = real_img if real_img is not None else atlas_img   #  atlas
     loss_sim = lncc_loss(x_syn, target_img, win=lncc_win)
     loss_kl = kl_divergence_loss(mu, logvar)
     if isinstance(loss_kl, torch.Tensor) and loss_kl.device != loss_sim.device:
-        loss_kl = loss_kl.to(device=loss_sim.device, dtype=loss_sim.dtype)  # 统一设备与精度
+        loss_kl = loss_kl.to(device=loss_sim.device, dtype=loss_sim.dtype)  #
     loss_smooth = smoothness_loss(svf)
 
     if num_classes is None:
-        num_classes = int(atlas_label.max().detach().item()) + 1   # 由标签动态推断类别数
-        num_classes = max(num_classes, 2)                           # 至少保留二分类语义
+        num_classes = int(atlas_label.max().detach().item()) + 1   #
+        num_classes = max(num_classes, 2)                           #
     loss_cycle = soft_dice_cycle_loss(
         atlas_label=atlas_label,
         phi_fwd=phi_fwd,
