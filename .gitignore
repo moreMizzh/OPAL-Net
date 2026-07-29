@@ -29,5 +29,8 @@ output/
 .DS_Store
 Thumbs.db
 
+# Local tests
+test_*.py
+
 # Local author notes
 README_CN.md

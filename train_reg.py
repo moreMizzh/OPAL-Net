@@ -123,7 +123,7 @@ class Config:
     exp_name: str = ""
     imgsize: tuple[int, int, int] = (0, 0, 0)
     num_classes: int = 0
-    bcv_atlas_id: int | None = 7  # BCV 可选 atlas id；留空时数据类内部回落到默认 27。
+    bcv_atlas_id: int | None = None  # BCV 可选 atlas id；留空时数据类内部回落到默认 27。
 
     # ==============================
     # 训练调度

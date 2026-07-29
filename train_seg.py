@@ -146,7 +146,7 @@ class Config:
     attn_heads: int = 8                        # cross-attention 头数。
     attn_dropout: float = 0.0                  # attention dropout 概率。
     attn_gate_init: float = -4.0               # attention gate 初始值（负值=默认关闭）。 目前未启用
-    enable_atlas_token_path: bool = False       # True=启用 atlas token path；False=退化为无 token 对照。
+    enable_atlas_token_path: bool = True       # True=启用 atlas token path；False=退化为无 token 对照。
     share_atlas_encoder_with_seg: bool = False  # True=atlas 共享 seg encoder；False=atlas 使用独立 encoder。
     bottleneck_ctx_residual_weights: tuple[float, float] = (1.0, 1.0)  # bottleneck 输出 = a * image_feat + b * atlas_delta。
 
