@@ -11,8 +11,6 @@ OPAL-Net uses a two-stage pipeline:
 
 The repository contains the training, inference, model, dataset, loss, and utility implementations for both stages.
 
-For the bundled BCV segmentation example, run `python demo/run_bcv.py`. See [demo/README.md](demo/README.md) for the outputs and other datasets.
-
 ## Requirements
 
 - Python 3.10
@@ -30,6 +28,16 @@ pip install -r requirements.txt
 ```
 
 Training and the default evaluation workflow require a CUDA-capable PyTorch installation.
+
+## Quick demo
+
+From the repository root, run the bundled BCV segmentation example with no arguments:
+
+```bash
+python demo/run_bcv.py
+```
+
+The script uses CUDA when available and otherwise runs on CPU. It creates a new directory under `demo/results/bcv-.../` for each run, containing `prediction.nii.gz` and `overlay.png`. The bundled test case has no ground-truth label, so this is a qualitative segmentation preview, not a Dice evaluation. OASIS and ADNI data and checkpoints are not included; see [demo/README.md](demo/README.md) for their requirements and the BCV sample's access conditions.
 
 ## Data preparation
 
@@ -143,7 +151,7 @@ The inference script writes prediction labels and metric summaries under the seg
 
 ## Outputs and reproducibility
 
-Generated checkpoints, predictions, NIfTI files, logs, and experiment directories are intentionally excluded from version control. Reproduction requires the approved dataset, the pinned software environment, and the commands above.
+Only the BCV demo's case and atlas NIfTI files and checkpoint are tracked in this private review repository. Generated checkpoints, predictions, NIfTI files, logs, experiment directories, and all other dataset files and checkpoints are excluded from version control. Reproduction requires the approved dataset, the pinned software environment, and the commands above. Do not make the repository public until redistribution permission for the BCV demo files is confirmed.
 
 The training and inference scripts expose additional configuration through `OPAL_REG_*`, `OPAL_REG_INF_*`, `OPAL_SEG_*`, and `OPAL_SEG_INF_*` environment variables.
 
