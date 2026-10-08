@@ -18,16 +18,13 @@ The three checkpoint specifications were selected by the best validation Dice am
 
 Each input must use the same preprocessing and label convention as its dataset's training data. The script preserves the input image's NIfTI geometry in the prediction. `--device` defaults to CUDA when available, otherwise CPU.
 
-The bundled BCV example contains preprocessed test image 61, atlas image 27, and the atlas's label 27 under `demo/data/bcv/`. These are 160 x 128 x 128 volumes from the local `bcv_small` layout; no test ground-truth label is included. Run from the repository root:
+The bundled BCV example contains preprocessed test image 61, atlas image 27, and the atlas's label 27 under `demo/data/bcv/`. These are 160 x 128 x 128 volumes from the local `bcv_small` layout; no test ground-truth label is included. Run from the repository root with no arguments:
 
 ```bash
-python demo/run.py \
-  --dataset bcv \
-  --image demo/data/bcv/case.nii.gz \
-  --atlas-image demo/data/bcv/atlas_image.nii.gz \
-  --atlas-label demo/data/bcv/atlas_label.nii.gz \
-  --output demo/results/bcv_case61
+python demo/run_bcv.py
 ```
+
+The script selects the bundled BCV files and checkpoint, uses CUDA when available (otherwise CPU), and prints the paths of `prediction.nii.gz` and `overlay.png`. Each run creates a separate directory under `demo/results/`.
 
 For a different BCV case, supply its preprocessed image and the matching atlas pair explicitly:
 

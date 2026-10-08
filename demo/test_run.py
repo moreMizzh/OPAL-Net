@@ -1,4 +1,6 @@
 import hashlib
+import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -76,3 +78,27 @@ def test_checkpoint_digest_mismatch_fails_before_outputs(case):
         run_case("bcv", image_path, atlas_image, atlas_label, checkpoint, output_dir, spec, "cpu")
 
     assert not output_dir.exists()
+
+
+def test_bcv_entrypoint_runs_twice_without_overwriting_results(case, tmp_path, monkeypatch):
+    from demo.run_bcv import main
+
+    image_path, atlas_image, atlas_label, checkpoint, spec, _ = case
+    demo_dir = tmp_path / "bundle"
+    data_dir = demo_dir / "data" / "bcv"
+    checkpoint_dir = demo_dir / "checkpoints"
+    data_dir.mkdir(parents=True)
+    checkpoint_dir.mkdir()
+    shutil.copyfile(image_path, data_dir / "case.nii.gz")
+    shutil.copyfile(atlas_image, data_dir / "atlas_image.nii.gz")
+    shutil.copyfile(atlas_label, data_dir / "atlas_label.nii.gz")
+    shutil.copyfile(checkpoint, checkpoint_dir / "bcv.pth")
+    (demo_dir / "models.json").write_text(json.dumps({"bcv": spec}), encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    first_prediction, first_preview = main(demo_dir=demo_dir, device="cpu")
+    second_prediction, second_preview = main(demo_dir=demo_dir, device="cpu")
+
+    assert first_prediction.parent != second_prediction.parent
+    assert first_prediction.parent.parent == demo_dir / "results"
+    assert all(path.is_file() for path in (first_prediction, first_preview, second_prediction, second_preview))

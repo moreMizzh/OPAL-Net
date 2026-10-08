@@ -11,7 +11,7 @@ OPAL-Net uses a two-stage pipeline:
 
 The repository contains the training, inference, model, dataset, loss, and utility implementations for both stages.
 
-For single-case segmentation with pretrained weights, see [demo/README.md](demo/README.md).
+For the bundled BCV segmentation example, run `python demo/run_bcv.py`. See [demo/README.md](demo/README.md) for the outputs and other datasets.
 
 ## Requirements
 
