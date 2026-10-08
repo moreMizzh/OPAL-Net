@@ -11,6 +11,8 @@ OPAL-Net uses a two-stage pipeline:
 
 The repository contains the training, inference, model, dataset, loss, and utility implementations for both stages.
 
+For single-case segmentation with pretrained weights, see [demo/README.md](demo/README.md).
+
 ## Requirements
 
 - Python 3.10
@@ -31,7 +33,7 @@ Training and the default evaluation workflow require a CUDA-capable PyTorch inst
 
 ## Data preparation
 
-Datasets are not distributed with this repository. Prepare each dataset according to its access terms and pass the dataset root explicitly through environment variables.
+Full training datasets are not distributed with this repository. The private review demo includes one preprocessed BCV test image and its atlas image/label pair; see [demo/README.md](demo/README.md) for the limited sample and its access conditions. Prepare all other data according to its source's access terms and pass the dataset root explicitly through environment variables.
 
 The supported layouts are:
 

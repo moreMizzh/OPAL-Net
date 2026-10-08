@@ -1,0 +1,74 @@
+{
+  "bcv": {
+    "sha256": "9d9e709d3636286c38a7b245385d7566300badc8e26e84c96d431d8c18df5fc2",
+    "selection": {
+      "checkpoint": "best_real_dice_ep133_dice0.9135.pth",
+      "best_validation_dice": 0.9135116189718246,
+      "recorded_test_dice": 0.8704467207193375
+    },
+    "architecture": {
+      "in_channels": 1,
+      "out_channels": 5,
+      "base_channels": 16,
+      "dropout_prob": 0.0,
+      "atlas_label_embed_channels": 8,
+      "context_query_tokens": 24,
+      "context_shuffle_factor": 2,
+      "atlas_task_dropout": 0.0,
+      "attn_heads": 8,
+      "attn_dropout": 0.0,
+      "attn_gate_init": -4.0,
+      "enable_atlas_token_path": true,
+      "share_atlas_encoder_with_seg": false,
+      "bottleneck_ctx_residual_weights": [0.0, 1.0]
+    }
+  },
+  "oasis": {
+    "sha256": "99886b90eddd30f2d2a9b7181eceae7750881ada837f89cefdaab4efa9550ff2",
+    "selection": {
+      "checkpoint": "best_real_dice_ep075_dice0.8629.pth",
+      "best_validation_dice": 0.8628962129354477,
+      "recorded_test_dice": 0.8662593807929602
+    },
+    "architecture": {
+      "in_channels": 1,
+      "out_channels": 36,
+      "base_channels": 16,
+      "dropout_prob": 0.0,
+      "atlas_label_embed_channels": 8,
+      "context_query_tokens": 48,
+      "context_shuffle_factor": 2,
+      "atlas_task_dropout": 0.0,
+      "attn_heads": 8,
+      "attn_dropout": 0.0,
+      "attn_gate_init": -4.0,
+      "enable_atlas_token_path": true,
+      "share_atlas_encoder_with_seg": false,
+      "bottleneck_ctx_residual_weights": [1.0, 1.0]
+    }
+  },
+  "adni": {
+    "sha256": "a75bc37a0b88dadd5adcf0cdd58155285b3a35f8c4a1aedb73568c452e20ce9d",
+    "selection": {
+      "checkpoint": "best_real_dice_ep062_dice0.8620.pth",
+      "best_validation_dice": 0.8620267868041992,
+      "recorded_test_dice": 0.855023010023709
+    },
+    "architecture": {
+      "in_channels": 1,
+      "out_channels": 4,
+      "base_channels": 16,
+      "dropout_prob": 0.0,
+      "atlas_label_embed_channels": 8,
+      "context_query_tokens": 48,
+      "context_shuffle_factor": 2,
+      "atlas_task_dropout": 0.0,
+      "attn_heads": 8,
+      "attn_dropout": 0.0,
+      "attn_gate_init": -4.0,
+      "enable_atlas_token_path": true,
+      "share_atlas_encoder_with_seg": true,
+      "bottleneck_ctx_residual_weights": [1.0, 1.0]
+    }
+  }
+}

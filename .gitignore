@@ -31,6 +31,10 @@ Thumbs.db
 
 # Local tests
 test_*.py
+!demo/test_run.py
+
+# Demo outputs
+demo/results/
 
 # Local notes
 README_CN.md
