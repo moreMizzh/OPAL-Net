@@ -35,6 +35,3 @@ test_*.py
 
 # Demo outputs
 demo/results/
-
-# Local notes
-README_CN.md

@@ -1,5 +1,7 @@
 # OPAL-Net
 
+[中文说明](README_CN.md)
+
 OPAL-Net is an atlas-guided medical image segmentation framework with cascaded registration, atlas prior tokens, bidirectional atlas-image cross-attention, and synthetic-real feature alignment.
 
 ## Overview
@@ -108,10 +110,10 @@ The experiment is written under `output/Reg/`. The training script can automatic
 
 ### 2. Export synthetic registration pairs
 
-If a separate export run is needed, point the inference script to the registration experiment directory:
+If a separate export run is needed, replace `<reg_experiment>` with the actual registration experiment directory name and point the inference script to it:
 
 ```bash
-OPAL_REG_INF_MODEL_DIR=output/Reg/<reg_experiment> \
+OPAL_REG_INF_MODEL_DIR="output/Reg/<reg_experiment>" \
 OPAL_REG_INF_DATA_ROOT="$DATA_ROOT/BCV" \
 OPAL_REG_INF_BCV_ATLAS_ID=27 \
 OPAL_REG_INF_EXPORT_TRAIN=1 \
@@ -127,7 +129,7 @@ Set the real dataset root and the registration experiment directory. The atlas-t
 
 ```bash
 OPAL_SEG_REAL_ROOT_DIR="$DATA_ROOT/BCV" \
-OPAL_SEG_SYN_ROOT_DIR=output/Reg/<reg_experiment> \
+OPAL_SEG_SYN_ROOT_DIR="output/Reg/<reg_experiment>" \
 OPAL_SEG_BCV_ATLAS_ID=27 \
 OPAL_SEG_ENABLE_ATLAS_TOKEN_PATH=1 \
 python train_seg.py
@@ -137,8 +139,10 @@ The segmentation experiment is written under `output/Seg/`.
 
 ### 4. Run segmentation inference
 
+Replace `<seg_experiment>` with the actual segmentation experiment directory name.
+
 ```bash
-OPAL_SEG_INF_MODEL_DIR=output/Seg/<seg_experiment> \
+OPAL_SEG_INF_MODEL_DIR="output/Seg/<seg_experiment>" \
 OPAL_SEG_INF_REAL_ROOT_DIR="$DATA_ROOT/BCV" \
 OPAL_SEG_INF_BCV_ATLAS_ID=27 \
 OPAL_SEG_INF_ENABLE_ATLAS_TOKEN_PATH=1 \
