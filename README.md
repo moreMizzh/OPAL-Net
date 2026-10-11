@@ -43,7 +43,7 @@ The script uses CUDA when available and otherwise runs on CPU. It creates a new 
 
 ## Data preparation
 
-Full training datasets are not distributed with this repository. The private review demo includes one preprocessed BCV test image and its atlas image/label pair; see [demo/README.md](demo/README.md) for the limited sample and its access conditions. Prepare all other data according to its source's access terms and pass the dataset root explicitly through environment variables.
+Full training datasets are not distributed with this repository. The private review demo includes one preprocessed BCV test image, its atlas image/label pair, and a BCV checkpoint; see [demo/README.md](demo/README.md) for the sample and its access conditions. Do not make the repository public until redistribution permission for these files is confirmed. Prepare all other data according to its source's access terms and pass the dataset root explicitly through environment variables.
 
 The supported layouts are:
 
@@ -152,12 +152,6 @@ python inference_seg.py
 ```
 
 The inference script writes prediction labels and metric summaries under the segmentation experiment directory.
-
-## Outputs and reproducibility
-
-Only the BCV demo's case and atlas NIfTI files and checkpoint are tracked in this private review repository. Generated checkpoints, predictions, NIfTI files, logs, experiment directories, and all other dataset files and checkpoints are excluded from version control. Reproduction requires the approved dataset, the pinned software environment, and the commands above. Do not make the repository public until redistribution permission for the BCV demo files is confirmed.
-
-The training and inference scripts expose additional configuration through `OPAL_REG_*`, `OPAL_REG_INF_*`, `OPAL_SEG_*`, and `OPAL_SEG_INF_*` environment variables.
 
 ## Citation
 
