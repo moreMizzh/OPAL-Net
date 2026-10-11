@@ -70,7 +70,3 @@ python demo/run.py \
 The output directory contains `prediction.nii.gz` and `overlay.png`. The preview shows the input and one axial slice with predicted labels overlaid. It is an inspection image, not a quantitative evaluation. Existing output files are not overwritten.
 
 For a checkpoint outside `demo/checkpoints/`, provide `--checkpoint /path/to/model.pth`. It must match the selected dataset's SHA-256 in `models.json`.
-
-## Data and publication
-
-This review repository is private and contains only the BCV case/atlas trio and the BCV checkpoint. The original [BCV challenge](https://www.synapse.org/Synapse:syn3193805/wiki/217753) requires joining to access its data and says release is subject to the data sponsors' conditions. Do not make this repository public without checking permission for the BCV files and checkpoint: deleting tracked files later does not remove them from Git history. OASIS-1 and ADNI files remain outside Git under their respective access terms.
