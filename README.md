@@ -39,11 +39,11 @@ From the repository root, run the bundled BCV segmentation example with no argum
 python demo/run_bcv.py
 ```
 
-The script uses CUDA when available and otherwise runs on CPU. It creates a new directory under `demo/results/bcv-.../` for each run, containing `prediction.nii.gz` and `overlay.png`. The bundled test case has no ground-truth label, so this is a qualitative segmentation preview, not a Dice evaluation. OASIS and ADNI data and checkpoints are not included; see [demo/README.md](demo/README.md) for their requirements and the BCV sample's access conditions.
+The script uses CUDA when available and otherwise runs on CPU. It creates a new directory under `demo/results/bcv-.../` for each run, containing `prediction.nii.gz` and `overlay.png`. The bundled test case has no ground-truth label, so this is a qualitative segmentation preview, not a Dice evaluation. OASIS and ADNI data and checkpoints are not included; see [demo/README.md](demo/README.md) for their requirements and the BCV sample details.
 
 ## Data preparation
 
-Full training datasets are not distributed with this repository. The private review demo includes one preprocessed BCV test image, its atlas image/label pair, and a BCV checkpoint; see [demo/README.md](demo/README.md) for the sample and its access conditions. Do not make the repository public until redistribution permission for these files is confirmed. Prepare all other data according to its source's access terms and pass the dataset root explicitly through environment variables.
+Full training datasets are not distributed with this repository. The private review demo includes one preprocessed BCV test image, its atlas image/label pair, and a BCV checkpoint; see [demo/README.md](demo/README.md) for sample details. Prepare all other data according to its source's access terms and pass the dataset root explicitly through environment variables.
 
 The supported layouts are:
 
